@@ -408,13 +408,6 @@ static int xsk_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
 	}
 
 	qid = sxdp->sxdp_queue_id;
-
-	if ((xs->rx && qid >= dev->real_num_rx_queues) ||
-	    (xs->tx && qid >= dev->real_num_tx_queues)) {
-		err = -EINVAL;
-		goto out_unlock;
-	}
-
 	flags = sxdp->sxdp_flags;
 
 	if (flags & XDP_SHARED_UMEM) {
@@ -515,6 +508,8 @@ static int xsk_setsockopt(struct socket *sock, int level, int optname,
 		struct xdp_umem_reg mr;
 		struct xdp_umem *umem;
 
+		if (optlen < sizeof(mr))
+			return -EINVAL;
 		if (copy_from_user(&mr, optval, sizeof(mr)))
 			return -EFAULT;
 
@@ -542,6 +537,8 @@ static int xsk_setsockopt(struct socket *sock, int level, int optname,
 		struct xsk_queue **q;
 		int entries;
 
+		if (optlen < sizeof(entries))
+			return -EINVAL;
 		if (copy_from_user(&entries, optval, sizeof(entries)))
 			return -EFAULT;
 
