@@ -48,6 +48,8 @@ char *lsm_names;
 static __initdata char chosen_lsm[SECURITY_NAME_MAX + 1] =
 	CONFIG_DEFAULT_SECURITY;
 
+static __initconst const char * const builtin_lsm_order = CONFIG_LSM;
+
 /* Ordered list of LSMs to initialize. */
 static __initdata struct lsm_info **ordered_lsms;
 
@@ -155,15 +157,30 @@ static void __init maybe_initialize_lsm(struct lsm_info *lsm)
 	}
 }
 
-/* Populate ordered LSMs list from single LSM name. */
+/* Populate ordered LSMs list from comma-separated LSM name list. */
 static void __init ordered_lsm_parse(const char *order, const char *origin)
 {
 	struct lsm_info *lsm;
+	char *sep, *name, *next;
 
-	for (lsm = __start_lsm_info; lsm < __end_lsm_info; lsm++) {
-		if (strcmp(lsm->name, order) == 0)
-			append_ordered_lsm(lsm, origin);
+	sep = kstrdup(order, GFP_KERNEL);
+	next = sep;
+	/* Walk the list, looking for matching LSMs. */
+	while ((name = strsep(&next, ",")) != NULL) {
+		bool found = false;
+
+		for (lsm = __start_lsm_info; lsm < __end_lsm_info; lsm++) {
+			if ((lsm->flags & LSM_FLAG_LEGACY_MAJOR) == 0 &&
+			    strcmp(lsm->name, name) == 0) {
+				append_ordered_lsm(lsm, origin);
+				found = true;
+			}
+		}
+
+		if (!found)
+			init_debug("%s ignored: %s\n", origin, name);
 	}
+	kfree(sep);
 }
 
 static void __init ordered_lsm_init(void)
@@ -173,7 +190,7 @@ static void __init ordered_lsm_init(void)
 	ordered_lsms = kcalloc(LSM_COUNT + 1, sizeof(*ordered_lsms),
 				GFP_KERNEL);
 
-	ordered_lsm_parse("integrity", "builtin");
+	ordered_lsm_parse(builtin_lsm_order, "builtin");
 
 	for (lsm = ordered_lsms; *lsm; lsm++)
 		maybe_initialize_lsm(*lsm);
@@ -508,20 +525,31 @@ void security_sb_free(struct super_block *sb)
 	call_void_hook(sb_free_security, sb);
 }
 
-int security_sb_copy_data(char *orig, char *copy)
+int security_sb_eat_lsm_opts(char *options, struct security_mnt_opts *opts)
 {
-	return call_int_hook(sb_copy_data, 0, orig, copy);
-}
-EXPORT_SYMBOL(security_sb_copy_data);
+	char *s = (char *)get_zeroed_page(GFP_KERNEL);
+	int err;
 
-int security_sb_remount(struct super_block *sb, void *data)
+	if (!s)
+		return -ENOMEM;
+	err = call_int_hook(sb_copy_data, 0, options, s);
+	if (!err)
+		err = call_int_hook(sb_parse_opts_str, 0, s, opts);
+	free_page((unsigned long)s);
+	return err;
+}
+EXPORT_SYMBOL(security_sb_eat_lsm_opts);
+
+int security_sb_remount(struct super_block *sb,
+			struct security_mnt_opts *opts)
 {
-	return call_int_hook(sb_remount, 0, sb, data);
+	return call_int_hook(sb_remount, 0, sb, opts);
 }
 
-int security_sb_kern_mount(struct super_block *sb, int flags, void *data)
+int security_sb_kern_mount(struct super_block *sb, int flags,
+			   struct security_mnt_opts *opts)
 {
-	return call_int_hook(sb_kern_mount, 0, sb, flags, data);
+	return call_int_hook(sb_kern_mount, 0, sb, flags, opts);
 }
 
 int security_sb_show_options(struct seq_file *m, struct super_block *sb)
@@ -641,14 +669,6 @@ out:
 	return (ret == -EOPNOTSUPP) ? 0 : ret;
 }
 EXPORT_SYMBOL(security_inode_init_security);
-
-int security_inode_init_security_anon(struct inode *inode,
-				      const struct qstr *name,
-				      const struct inode *context_inode)
-{
-	return call_int_hook(inode_init_security_anon, 0, inode, name,
-			     context_inode);
-}
 
 int security_old_inode_init_security(struct inode *inode, struct inode *dir,
 				     const struct qstr *qstr, const char **name,
@@ -1038,23 +1058,6 @@ int security_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return call_int_hook(file_ioctl, 0, file, cmd, arg);
 }
 
-/**
- * security_file_ioctl_compat() - Check if an ioctl is allowed in compat mode
- * @file: associated file
- * @cmd: ioctl cmd
- * @arg: ioctl arguments
- *
- * Compat version of security_file_ioctl() that correctly handles 32-bit
- * processes running on 64-bit kernels.
- *
- * Return: Returns 0 if permission is granted.
- */
-int security_file_ioctl_compat(struct file *file, unsigned int cmd,
-			       unsigned long arg)
-{
-	return call_int_hook(file_ioctl_compat, 0, file, cmd, arg);
-}
-
 static inline unsigned long mmap_prot(struct file *file, unsigned long prot)
 {
 	/*
@@ -1091,20 +1094,18 @@ static inline unsigned long mmap_prot(struct file *file, unsigned long prot)
 int security_mmap_file(struct file *file, unsigned long prot,
 			unsigned long flags)
 {
-	unsigned long prot_adj = mmap_prot(file, prot);
 	int ret;
-
-	ret = call_int_hook(mmap_file, 0, file, prot, prot_adj, flags);
+	ret = call_int_hook(mmap_file, 0, file, prot,
+					mmap_prot(file, prot), flags);
 	if (ret)
 		return ret;
-	return ima_file_mmap(file, prot, prot_adj, flags);
+	return ima_file_mmap(file, prot);
 }
 
 int security_mmap_addr(unsigned long addr)
 {
 	return call_int_hook(mmap_addr, 0, addr);
 }
-EXPORT_SYMBOL_GPL(security_mmap_addr);
 
 int security_file_mprotect(struct vm_area_struct *vma, unsigned long reqprot,
 			    unsigned long prot)
