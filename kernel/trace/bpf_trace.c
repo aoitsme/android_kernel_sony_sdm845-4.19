@@ -11,11 +11,52 @@
 #include <linux/uaccess.h>
 #include <linux/ctype.h>
 #include <linux/kprobes.h>
+#include <linux/spinlock.h>
 #include <linux/syscalls.h>
 #include <linux/error-injection.h>
 
 #include "trace_probe.h"
 #include "trace.h"
+
+#define CREATE_TRACE_POINTS
+#include "bpf_trace.h"
+
+#ifdef CONFIG_MODULES
+struct bpf_trace_module {
+	struct module *module;
+	struct list_head list;
+};
+
+static LIST_HEAD(bpf_trace_modules);
+static DEFINE_MUTEX(bpf_module_mutex);
+
+static struct bpf_raw_event_map *bpf_get_raw_tracepoint_module(const char *name)
+{
+	struct bpf_raw_event_map *btp, *ret = NULL;
+	struct bpf_trace_module *btm;
+	unsigned int i;
+
+	mutex_lock(&bpf_module_mutex);
+	list_for_each_entry(btm, &bpf_trace_modules, list) {
+		for (i = 0; i < btm->module->num_bpf_raw_events; ++i) {
+			btp = &btm->module->bpf_raw_events[i];
+			if (!strcmp(btp->tp->name, name)) {
+				if (try_module_get(btm->module))
+					ret = btp;
+				goto out;
+			}
+		}
+	}
+out:
+	mutex_unlock(&bpf_module_mutex);
+	return ret;
+}
+#else
+static struct bpf_raw_event_map *bpf_get_raw_tracepoint_module(const char *name)
+{
+	return NULL;
+}
+#endif /* CONFIG_MODULES */
 
 u64 bpf_get_stackid(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5);
 u64 bpf_get_stack(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5);
@@ -156,6 +197,30 @@ static const struct bpf_func_proto *bpf_get_probe_write_proto(void)
 	return &bpf_probe_write_user_proto;
 }
 
+static DEFINE_RAW_SPINLOCK(trace_printk_lock);
+
+#define BPF_TRACE_PRINTK_SIZE   1024
+
+static inline __printf(1, 0) int bpf_do_trace_printk(const char *fmt, ...)
+{
+	static char buf[BPF_TRACE_PRINTK_SIZE];
+	unsigned long flags;
+	va_list ap;
+	int ret;
+
+	raw_spin_lock_irqsave(&trace_printk_lock, flags);
+	va_start(ap, fmt);
+	ret = vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	/* vsnprintf() will not append null for zero-length strings */
+	if (ret == 0)
+		buf[0] = '\0';
+	trace_bpf_trace_printk(buf);
+	raw_spin_unlock_irqrestore(&trace_printk_lock, flags);
+
+	return ret;
+}
+
 /*
  * Only limited trace_printk() conversion specifiers allowed:
  * %d %i %u %x %ld %li %lu %lx %lld %lli %llu %llx %p %s
@@ -246,8 +311,7 @@ BPF_CALL_5(bpf_trace_printk, char *, fmt, u32, fmt_size, u64, arg1,
  */
 #define __BPF_TP_EMIT()	__BPF_ARG3_TP()
 #define __BPF_TP(...)							\
-	__trace_printk(0 /* Fake ip */,					\
-		       fmt, ##__VA_ARGS__)
+	bpf_do_trace_printk(fmt, ##__VA_ARGS__)
 
 #define __BPF_ARG1_TP(...)						\
 	((mod[0] == 2 || (mod[0] == 1 && __BITS_PER_LONG == 64))	\
@@ -284,10 +348,15 @@ static const struct bpf_func_proto bpf_trace_printk_proto = {
 const struct bpf_func_proto *bpf_get_trace_printk_proto(void)
 {
 	/*
-	 * this program might be calling bpf_trace_printk,
-	 * so allocate per-cpu printk buffers
+	 * This program might be calling bpf_trace_printk,
+	 * so enable the associated bpf_trace/bpf_trace_printk event.
+	 * Repeat this each time as it is possible a user has
+	 * disabled bpf_trace_printk events.  By loading a program
+	 * calling bpf_trace_printk() however the user has expressed
+	 * the intent to see such events.
 	 */
-	trace_printk_init_buffers();
+	if (trace_set_clr_event("bpf_trace", "bpf_trace_printk", 1))
+		pr_warn_ratelimited("could not enable bpf_trace_printk events");
 
 	return &bpf_trace_printk_proto;
 }
@@ -1146,7 +1215,7 @@ int perf_event_query_prog_array(struct perf_event *event, void __user *info)
 extern struct bpf_raw_event_map __start__bpf_raw_tp[];
 extern struct bpf_raw_event_map __stop__bpf_raw_tp[];
 
-struct bpf_raw_event_map *bpf_find_raw_tracepoint(const char *name)
+struct bpf_raw_event_map *bpf_get_raw_tracepoint(const char *name)
 {
 	struct bpf_raw_event_map *btp = __start__bpf_raw_tp;
 
@@ -1154,7 +1223,16 @@ struct bpf_raw_event_map *bpf_find_raw_tracepoint(const char *name)
 		if (!strcmp(btp->tp->name, name))
 			return btp;
 	}
-	return NULL;
+
+	return bpf_get_raw_tracepoint_module(name);
+}
+
+void bpf_put_raw_tracepoint(struct bpf_raw_event_map *btp)
+{
+	struct module *mod = __module_address((unsigned long)btp);
+
+	if (mod)
+		module_put(mod);
 }
 
 static __always_inline
@@ -1223,7 +1301,8 @@ static int __bpf_probe_register(struct bpf_raw_event_map *btp, struct bpf_prog *
 	if (prog->aux->max_ctx_offset > btp->num_args * sizeof(u64))
 		return -EINVAL;
 
-	return tracepoint_probe_register(tp, (void *)btp->bpf_func, prog);
+	return tracepoint_probe_register_may_exist(tp, (void *)btp->bpf_func,
+						   prog);
 }
 
 int bpf_probe_register(struct bpf_raw_event_map *btp, struct bpf_prog *prog)
@@ -1275,10 +1354,59 @@ int bpf_get_perf_event_info(const struct perf_event *event, u32 *prog_id,
 #ifdef CONFIG_UPROBE_EVENTS
 		if (flags & TRACE_EVENT_FL_UPROBE)
 			err = bpf_get_uprobe_info(event, fd_type, buf,
-						  probe_offset,
+						  probe_offset, probe_addr,
 						  event->attr.type == PERF_TYPE_TRACEPOINT);
 #endif
 	}
 
 	return err;
 }
+
+#ifdef CONFIG_MODULES
+int bpf_event_notify(struct notifier_block *nb, unsigned long op, void *module)
+{
+	struct bpf_trace_module *btm, *tmp;
+	struct module *mod = module;
+
+	if (mod->num_bpf_raw_events == 0 ||
+	    (op != MODULE_STATE_COMING && op != MODULE_STATE_GOING))
+		return 0;
+
+	mutex_lock(&bpf_module_mutex);
+
+	switch (op) {
+	case MODULE_STATE_COMING:
+		btm = kzalloc(sizeof(*btm), GFP_KERNEL);
+		if (btm) {
+			btm->module = module;
+			list_add(&btm->list, &bpf_trace_modules);
+		}
+		break;
+	case MODULE_STATE_GOING:
+		list_for_each_entry_safe(btm, tmp, &bpf_trace_modules, list) {
+			if (btm->module == module) {
+				list_del(&btm->list);
+				kfree(btm);
+				break;
+			}
+		}
+		break;
+	}
+
+	mutex_unlock(&bpf_module_mutex);
+
+	return 0;
+}
+
+static struct notifier_block bpf_module_nb = {
+	.notifier_call = bpf_event_notify,
+};
+
+int __init bpf_event_init(void)
+{
+	register_module_notifier(&bpf_module_nb);
+	return 0;
+}
+
+fs_initcall(bpf_event_init);
+#endif /* CONFIG_MODULES */
