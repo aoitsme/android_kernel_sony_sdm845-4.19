@@ -260,7 +260,7 @@ static int nsim_bpf_create_prog(struct netdevsim *ns, struct bpf_prog *prog)
 
 static int nsim_bpf_verifier_prep(struct bpf_prog *prog)
 {
-	struct netdevsim *ns = netdev_priv(prog->aux->offload->netdev);
+	struct netdevsim *ns = bpf_offload_dev_priv(prog->aux->offload->offdev);
 
 	if (!ns->bpf_bind_accept)
 		return -EOPNOTSUPP;
@@ -357,12 +357,10 @@ nsim_map_alloc_elem(struct bpf_offloaded_map *offmap, unsigned int idx)
 {
 	struct nsim_bpf_bound_map *nmap = offmap->dev_priv;
 
-	nmap->entry[idx].key = kmalloc(offmap->map.key_size,
-				       GFP_KERNEL_ACCOUNT | __GFP_NOWARN);
+	nmap->entry[idx].key = kmalloc(offmap->map.key_size, GFP_USER);
 	if (!nmap->entry[idx].key)
 		return -ENOMEM;
-	nmap->entry[idx].value = kmalloc(offmap->map.value_size,
-					 GFP_KERNEL_ACCOUNT | __GFP_NOWARN);
+	nmap->entry[idx].value = kmalloc(offmap->map.value_size, GFP_USER);
 	if (!nmap->entry[idx].value) {
 		kfree(nmap->entry[idx].key);
 		nmap->entry[idx].key = NULL;
@@ -504,7 +502,7 @@ nsim_bpf_map_alloc(struct netdevsim *ns, struct bpf_offloaded_map *offmap)
 	if (offmap->map.map_flags)
 		return -EINVAL;
 
-	nmap = kzalloc(sizeof(*nmap), GFP_KERNEL_ACCOUNT);
+	nmap = kzalloc(sizeof(*nmap), GFP_USER);
 	if (!nmap)
 		return -ENOMEM;
 
@@ -605,7 +603,8 @@ int nsim_bpf_init(struct netdevsim *ns)
 		if (IS_ERR_OR_NULL(ns->sdev->ddir_bpf_bound_progs))
 			return -ENOMEM;
 
-		ns->sdev->bpf_dev = bpf_offload_dev_create(&nsim_bpf_dev_ops);
+		ns->sdev->bpf_dev = bpf_offload_dev_create(&nsim_bpf_dev_ops,
+							   ns);
 		err = PTR_ERR_OR_ZERO(ns->sdev->bpf_dev);
 		if (err)
 			return err;
