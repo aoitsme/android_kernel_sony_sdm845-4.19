@@ -58,6 +58,7 @@
 #define SE_SBINITIALIZED	0x0100
 #define SE_SBPROC		0x0200
 #define SE_SBGENFS		0x0400
+#define SE_SBGENFS_XATTR	0x0800
 
 #define CONTEXT_STR	"context="
 #define FSCONTEXT_STR	"fscontext="
@@ -107,8 +108,6 @@ struct selinux_state {
 	bool initialized;
 	bool policycap[__POLICYDB_CAPABILITY_MAX];
 	bool android_netlink_route;
-	bool android_netlink_getneigh;
-
 	struct selinux_avc *avc;
 	struct selinux_ss *ss;
 } __randomize_layout;
@@ -215,13 +214,6 @@ static inline bool selinux_android_nlroute_getlink(void)
 	struct selinux_state *state = &selinux_state;
 
 	return state->android_netlink_route;
-}
-
-static inline bool selinux_android_nlroute_getneigh(void)
-{
-	struct selinux_state *state = &selinux_state;
-
-	return state->android_netlink_getneigh;
 }
 
 int security_mls_enabled(struct selinux_state *state);
