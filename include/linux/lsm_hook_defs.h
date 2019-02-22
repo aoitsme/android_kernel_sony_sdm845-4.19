@@ -56,10 +56,8 @@ LSM_HOOK(void, LSM_RET_VOID, bprm_committed_creds, struct linux_binprm *bprm)
 LSM_HOOK(int, 0, sb_alloc_security, struct super_block *sb)
 LSM_HOOK(void, LSM_RET_VOID, sb_free_security, struct super_block *sb)
 LSM_HOOK(int, 0, sb_copy_data, char *orig, char *copy)
-LSM_HOOK(int, 0, sb_remount, struct super_block *sb,
-	 struct security_mnt_opts *opts)
-LSM_HOOK(int, 0, sb_kern_mount, struct super_block *sb, int flags,
-	 struct security_mnt_opts *opts)
+LSM_HOOK(int, 0, sb_remount, struct super_block *sb, void *data)
+LSM_HOOK(int, 0, sb_kern_mount, struct super_block *sb, int flags, void *data)
 LSM_HOOK(int, 0, sb_show_options, struct seq_file *m, struct super_block *sb)
 LSM_HOOK(int, 0, sb_statfs, struct dentry *dentry)
 LSM_HOOK(int, 0, sb_mount, const char *dev_name, const struct path *path,
@@ -144,6 +142,8 @@ LSM_HOOK(int, 0, inode_listsecurity, struct inode *inode, char *buffer,
 LSM_HOOK(void, LSM_RET_VOID, inode_getsecid, struct inode *inode, u32 *secid)
 LSM_HOOK(int, 0, inode_copy_up, struct dentry *src, struct cred **new)
 LSM_HOOK(int, 0, inode_copy_up_xattr, const char *name)
+LSM_HOOK(int, 0, kernfs_init_security, struct kernfs_node *kn_dir,
+     struct kernfs_node *kn)
 LSM_HOOK(int, 0, file_permission, struct file *file, int mask)
 LSM_HOOK(int, 0, file_alloc_security, struct file *file)
 LSM_HOOK(void, LSM_RET_VOID, file_free_security, struct file *file)
