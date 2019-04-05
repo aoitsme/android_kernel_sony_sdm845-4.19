@@ -196,7 +196,7 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 	struct net_device *dev = dst->dev;
 	unsigned int hh_len = LL_RESERVED_SPACE(dev);
 	struct neighbour *neigh;
-	u32 nexthop;
+	bool is_v6gw = false;
 
 	if (rt->rt_type == RTN_MULTICAST) {
 		IP_UPD_PO_STATS(net, IPSTATS_MIB_OUTMCAST, skb->len);
@@ -221,21 +221,18 @@ static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *s
 	if (lwtunnel_xmit_redirect(dst->lwtstate)) {
 		int res = lwtunnel_xmit(skb);
 
-		if (res != LWTUNNEL_XMIT_CONTINUE)
+		if (res < 0 || res == LWTUNNEL_XMIT_DONE)
 			return res;
 	}
 
 	rcu_read_lock_bh();
-	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr);
-	neigh = __ipv4_neigh_lookup_noref(dev, nexthop);
-	if (unlikely(!neigh))
-		neigh = __neigh_create(&arp_tbl, &nexthop, dev, false);
+	neigh = ip_neigh_for_gw(rt, skb, &is_v6gw);
 	if (!IS_ERR(neigh)) {
 		int res;
 
 		sock_confirm_neigh(skb, neigh);
-		res = neigh_output(neigh, skb, false);
-
+		/* if crossing protocols, can not use the cached header */
+		res = neigh_output(neigh, skb, is_v6gw);
 		rcu_read_unlock_bh();
 		return res;
 	}
@@ -1140,12 +1137,6 @@ static int ip_setup_cork(struct sock *sk, struct inet_cork *cork,
 	if (unlikely(!rt))
 		return -EFAULT;
 
-	cork->fragsize = ip_sk_use_pmtu(sk) ?
-			 dst_mtu(&rt->dst) : READ_ONCE(rt->dst.dev->mtu);
-
-	if (!inetdev_valid_mtu(cork->fragsize))
-		return -ENETUNREACH;
-
 	/*
 	 * setup for corking.
 	 */
@@ -1161,6 +1152,12 @@ static int ip_setup_cork(struct sock *sk, struct inet_cork *cork,
 		cork->flags |= IPCORK_OPT;
 		cork->addr = ipc->addr;
 	}
+
+	cork->fragsize = ip_sk_use_pmtu(sk) ?
+			 dst_mtu(&rt->dst) : READ_ONCE(rt->dst.dev->mtu);
+
+	if (!inetdev_valid_mtu(cork->fragsize))
+		return -ENETUNREACH;
 
 	cork->gso_size = ipc->gso_size;
 
@@ -1443,19 +1440,9 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 	cork->dst = NULL;
 	skb_dst_set(skb, &rt->dst);
 
-	if (iph->protocol == IPPROTO_ICMP) {
-		u8 icmp_type;
-
-		/* For such sockets, transhdrlen is zero when do ip_append_data(),
-		 * so icmphdr does not in skb linear region and can not get icmp_type
-		 * by icmp_hdr(skb)->type.
-		 */
-		if (sk->sk_type == SOCK_RAW && !inet_sk(sk)->hdrincl)
-			icmp_type = fl4->fl4_icmp_type;
-		else
-			icmp_type = icmp_hdr(skb)->type;
-		icmp_out_count(net, icmp_type);
-	}
+	if (iph->protocol == IPPROTO_ICMP)
+		icmp_out_count(net, ((struct icmphdr *)
+			skb_transport_header(skb))->type);
 
 	ip_cork_release(cork);
 out:
