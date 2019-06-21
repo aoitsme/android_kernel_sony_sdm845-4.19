@@ -11,6 +11,7 @@
  * management can be a bitch. See 'mm/memory.c': 'copy_page_range()'
  */
 
+#include <linux/anon_inodes.h>
 #include <linux/slab.h>
 #include <linux/sched/autogroup.h>
 #include <linux/sched/mm.h>
@@ -21,6 +22,7 @@
 #include <linux/sched/task.h>
 #include <linux/sched/task_stack.h>
 #include <linux/sched/cputime.h>
+#include <linux/seq_file.h>
 #include <linux/rtmutex.h>
 #include <linux/init.h>
 #include <linux/unistd.h>
@@ -91,6 +93,8 @@
 #include <linux/kcov.h>
 #include <linux/livepatch.h>
 #include <linux/thread_info.h>
+#include <linux/cpufreq_times.h>
+#include <linux/scs.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -399,6 +403,9 @@ void put_task_stack(struct task_struct *tsk)
 
 void free_task(struct task_struct *tsk)
 {
+	cpufreq_task_times_exit(tsk);
+	scs_release(tsk);
+
 #ifndef CONFIG_THREAD_INFO_IN_TASK
 	/*
 	 * The task is finally done with both the stack and thread_info,
@@ -603,7 +610,13 @@ static void check_mm(struct mm_struct *mm)
 	int i;
 
 	for (i = 0; i < NR_MM_COUNTERS; i++) {
-		long x = atomic_long_read(&mm->rss_stat.count[i]);
+		long x;
+
+		/* MM_UNRECLAIMABLE could be freed later in exit_files */
+		if (i == MM_UNRECLAIMABLE)
+			continue;
+
+		x = atomic_long_read(&mm->rss_stat.count[i]);
 
 		if (unlikely(x))
 			printk(KERN_ALERT "BUG: Bad rss-counter state "
@@ -777,6 +790,8 @@ void __init fork_init(void)
 			  NULL, free_vm_stack_cache);
 #endif
 
+	scs_init();
+
 	lockdep_init_task(&init_task);
 }
 
@@ -832,6 +847,10 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	if (err)
 		goto free_stack;
 
+	err = scs_prepare(tsk, node);
+	if (err)
+		goto free_stack;
+
 #ifdef CONFIG_SECCOMP
 	/*
 	 * We must handle setting up seccomp filters once we're under
@@ -852,10 +871,12 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #endif
 
 	/*
-	 * One for us, one for whoever does the "release_task()" (usually
-	 * parent)
+	 * One for the user space visible state that goes away when reaped.
+	 * One for the scheduler.
 	 */
-	atomic_set(&tsk->usage, 2);
+	refcount_set(&tsk->rcu_users, 2);
+	/* One for the rcu users */
+	atomic_set(&tsk->usage, 1);
 #ifdef CONFIG_BLK_DEV_IO_TRACE
 	tsk->btrace_seq = 0;
 #endif
@@ -964,6 +985,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->pmd_huge_pte = NULL;
 #endif
 	mm_init_uprobes_state(mm);
+	hugetlb_count_init(mm);
 
 	if (current->mm) {
 		mm->flags = current->mm->flags & MMF_INIT_MASK;
@@ -1191,7 +1213,9 @@ static int wait_for_vfork_done(struct task_struct *child,
 	int killed;
 
 	freezer_do_not_count();
+	cgroup_enter_frozen();
 	killed = wait_for_completion_killable(vfork);
+	cgroup_leave_frozen(false);
 	freezer_count();
 
 	if (killed) {
@@ -1643,6 +1667,59 @@ static __always_inline void delayed_free_task(struct task_struct *tsk)
 		free_task(tsk);
 }
 
+static int pidfd_release(struct inode *inode, struct file *file)
+{
+	struct pid *pid = file->private_data;
+
+	file->private_data = NULL;
+	put_pid(pid);
+	return 0;
+}
+
+#ifdef CONFIG_PROC_FS
+static void pidfd_show_fdinfo(struct seq_file *m, struct file *f)
+{
+	struct pid_namespace *ns = proc_pid_ns(file_inode(m->file));
+	struct pid *pid = f->private_data;
+
+	seq_put_decimal_ull(m, "Pid:\t", pid_nr_ns(pid, ns));
+	seq_putc(m, '\n');
+}
+#endif
+
+/*
+ * Poll support for process exit notification.
+ */
+static __poll_t pidfd_poll(struct file *file, struct poll_table_struct *pts)
+{
+	struct task_struct *task;
+	struct pid *pid = file->private_data;
+	__poll_t poll_flags = 0;
+
+	poll_wait(file, &pid->wait_pidfd, pts);
+
+	rcu_read_lock();
+	task = pid_task(pid, PIDTYPE_PID);
+	/*
+	 * Inform pollers only when the whole thread group exits.
+	 * If the thread group leader exits before all other threads in the
+	 * group, then poll(2) should block, similar to the wait(2) family.
+	 */
+	if (!task || (task->exit_state && thread_group_empty(task)))
+		poll_flags = EPOLLIN | EPOLLRDNORM;
+	rcu_read_unlock();
+
+	return poll_flags;
+}
+
+const struct file_operations pidfd_fops = {
+	.release = pidfd_release,
+	.poll = pidfd_poll,
+#ifdef CONFIG_PROC_FS
+	.show_fdinfo = pidfd_show_fdinfo,
+#endif
+};
+
 static void copy_oom_score_adj(u64 clone_flags, struct task_struct *tsk)
 {
 	/* Skip if kernel thread */
@@ -1674,15 +1751,17 @@ static __latent_entropy struct task_struct *copy_process(
 					unsigned long clone_flags,
 					unsigned long stack_start,
 					unsigned long stack_size,
+					int __user *parent_tidptr,
 					int __user *child_tidptr,
 					struct pid *pid,
 					int trace,
 					unsigned long tls,
 					int node)
 {
-	int retval;
+	int pidfd = -1, retval;
 	struct task_struct *p;
 	struct multiprocess_signals delayed;
+	struct file *pidfile = NULL;
 
 	/*
 	 * Don't allow sharing the root directory with processes in a different
@@ -1730,6 +1809,19 @@ static __latent_entropy struct task_struct *copy_process(
 			return ERR_PTR(-EINVAL);
 	}
 
+	if (clone_flags & CLONE_PIDFD) {
+		/*
+		 * - CLONE_PARENT_SETTID is useless for pidfds and also
+		 *   parent_tidptr is used to return pidfds.
+		 * - CLONE_DETACHED is blocked so that we can potentially
+		 *   reuse it later for CLONE_PIDFD.
+		 * - CLONE_THREAD is blocked until someone really needs it.
+		 */
+		if (clone_flags &
+		    (CLONE_DETACHED | CLONE_PARENT_SETTID | CLONE_THREAD))
+			return ERR_PTR(-EINVAL);
+	}
+
 	/*
 	 * Force any signals received before this point to be delivered
 	 * before the fork happens.  Collect up signals sent to multiple
@@ -1752,6 +1844,8 @@ static __latent_entropy struct task_struct *copy_process(
 	p = dup_task_struct(current, node);
 	if (!p)
 		goto fork_out;
+
+	cpufreq_task_times_init(p);
 
 	/*
 	 * This _must_ happen before we call free_task(), i.e. before we jump
@@ -1823,6 +1917,10 @@ static __latent_entropy struct task_struct *copy_process(
 #endif
 
 	p->default_timer_slack_ns = current->timer_slack_ns;
+
+#ifdef CONFIG_PSI
+	p->psi_flags = 0;
+#endif
 
 	task_io_accounting_init(&p->ioac);
 	acct_clear_integrals(p);
@@ -1930,6 +2028,32 @@ static __latent_entropy struct task_struct *copy_process(
 		}
 	}
 
+	/*
+	 * This has to happen after we've potentially unshared the file
+	 * descriptor table (so that the pidfd doesn't leak into the child
+	 * if the fd table isn't shared).
+	 */
+	if (clone_flags & CLONE_PIDFD) {
+		retval = get_unused_fd_flags(O_RDWR | O_CLOEXEC);
+		if (retval < 0)
+			goto bad_fork_free_pid;
+
+		pidfd = retval;
+
+		pidfile = anon_inode_getfile("[pidfd]", &pidfd_fops, pid,
+					      O_RDWR | O_CLOEXEC);
+		if (IS_ERR(pidfile)) {
+			put_unused_fd(pidfd);
+			retval = PTR_ERR(pidfile);
+			goto bad_fork_free_pid;
+		}
+		get_pid(pid);	/* held by pidfile now */
+
+		retval = put_user(pidfd, parent_tidptr);
+		if (retval)
+			goto bad_fork_put_pidfd;
+	}
+
 #ifdef CONFIG_BLOCK
 	p->plug = NULL;
 #endif
@@ -1979,7 +2103,7 @@ static __latent_entropy struct task_struct *copy_process(
 	 */
 	retval = cgroup_can_fork(p);
 	if (retval)
-		goto bad_fork_free_pid;
+		goto bad_fork_cgroup_threadgroup_change_end;
 
 	/*
 	 * From this point on we must avoid any synchronous user-space
@@ -1990,7 +2114,7 @@ static __latent_entropy struct task_struct *copy_process(
 	 */
 
 	p->start_time = ktime_get_ns();
-	p->real_start_time = ktime_get_boot_ns();
+	p->real_start_time = ktime_get_boottime_ns();
 
 	/*
 	 * Make it visible to the rest of the system, but dont wake it up yet.
@@ -2035,7 +2159,6 @@ static __latent_entropy struct task_struct *copy_process(
 		retval = -EINTR;
 		goto bad_fork_cancel_cgroup;
 	}
-
 
 	init_task_pid_links(p);
 	if (likely(p->pid)) {
@@ -2085,6 +2208,9 @@ static __latent_entropy struct task_struct *copy_process(
 	syscall_tracepoint_update(p);
 	write_unlock_irq(&tasklist_lock);
 
+	if (pidfile)
+		fd_install(pidfd, pidfile);
+
 	proc_fork_connector(p);
 	cgroup_post_fork(p);
 	cgroup_threadgroup_change_end(current);
@@ -2101,8 +2227,14 @@ bad_fork_cancel_cgroup:
 	spin_unlock(&current->sighand->siglock);
 	write_unlock_irq(&tasklist_lock);
 	cgroup_cancel_fork(p);
-bad_fork_free_pid:
+bad_fork_cgroup_threadgroup_change_end:
 	cgroup_threadgroup_change_end(current);
+bad_fork_put_pidfd:
+	if (clone_flags & CLONE_PIDFD) {
+		fput(pidfile);
+		put_unused_fd(pidfd);
+	}
+bad_fork_free_pid:
 	if (pid != &init_struct_pid)
 		free_pid(pid);
 bad_fork_cleanup_thread:
@@ -2136,6 +2268,7 @@ bad_fork_cleanup_perf:
 	perf_event_free_task(p);
 bad_fork_cleanup_policy:
 	lockdep_free_task(p);
+	free_task_load_ptrs(p);
 #ifdef CONFIG_NUMA
 	mpol_put(p->mempolicy);
 bad_fork_cleanup_threadgroup_lock:
@@ -2168,7 +2301,7 @@ static inline void init_idle_pids(struct task_struct *idle)
 struct task_struct *fork_idle(int cpu)
 {
 	struct task_struct *task;
-	task = copy_process(CLONE_VM, 0, 0, NULL, &init_struct_pid, 0, 0,
+	task = copy_process(CLONE_VM, 0, 0, NULL, NULL, &init_struct_pid, 0, 0,
 			    cpu_to_node(cpu));
 	if (!IS_ERR(task)) {
 		init_idle_pids(task);
@@ -2215,12 +2348,14 @@ long _do_fork(unsigned long clone_flags,
 			trace = 0;
 	}
 
-	p = copy_process(clone_flags, stack_start, stack_size,
+	p = copy_process(clone_flags, stack_start, stack_size, parent_tidptr,
 			 child_tidptr, NULL, trace, tls, NUMA_NO_NODE);
 	add_latent_entropy();
 
 	if (IS_ERR(p))
 		return PTR_ERR(p);
+
+	cpufreq_task_times_alloc(p);
 
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
