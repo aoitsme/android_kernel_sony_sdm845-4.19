@@ -163,6 +163,10 @@ struct ftrace_likely_data {
 #define asm_volatile_goto(x...) asm goto(x)
 #endif
 
+#ifndef __no_fgcse
+# define __no_fgcse
+#endif
+
 /* Are two types/vars the same type (ignoring qualifiers)? */
 #define __same_type(a, b) __builtin_types_compatible_p(typeof(a), typeof(b))
 
@@ -229,7 +233,7 @@ struct ftrace_likely_data {
 #define __section(S)		__attribute__((__section__(#S)))
 
 
-#ifdef CONFIG_ENABLE_MUST_CHECK
+#if defined(CONFIG_ENABLE_MUST_CHECK) && !defined(__GENKSYMS__)
 #define __must_check		__attribute__((warn_unused_result))
 #else
 #define __must_check
