@@ -174,7 +174,7 @@ void __trace_note_message(struct blk_trace *bt, struct blkcg *blkcg,
 		blkcg = NULL;
 #ifdef CONFIG_BLK_CGROUP
 	trace_note(bt, 0, BLK_TN_MESSAGE, buf, n,
-		blkcg ? cgroup_get_kernfs_id(blkcg->css.cgroup) : 0);
+		   blkcg ? cgroup_id(blkcg->css.cgroup) : 1);
 #else
 	trace_note(bt, 0, BLK_TN_MESSAGE, buf, n, 0);
 #endif
@@ -800,7 +800,7 @@ static u64 blk_trace_bio_get_cgid(struct request_queue *q, struct bio *bio)
 
 	if (!bio->bi_css)
 		return 0;
-	return cgroup_get_kernfs_id(bio->bi_css->cgroup);
+	return cgroup_id(bio->bi_css->cgroup);
 }
 #else
 u64 blk_trace_bio_get_cgid(struct request_queue *q, struct bio *bio)
@@ -1589,8 +1589,7 @@ blk_trace_event_print_binary(struct trace_iterator *iter, int flags,
 
 static enum print_line_t blk_tracer_print_line(struct trace_iterator *iter)
 {
-	if ((iter->ent->type != TRACE_BLK) ||
-	    !(blk_tracer_flags.val & TRACE_BLK_OPT_CLASSIC))
+	if (!(blk_tracer_flags.val & TRACE_BLK_OPT_CLASSIC))
 		return TRACE_TYPE_UNHANDLED;
 
 	return print_one_line(iter, true);
