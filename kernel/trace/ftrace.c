@@ -1128,7 +1128,7 @@ struct ftrace_page {
 	struct ftrace_page	*next;
 	struct dyn_ftrace	*records;
 	int			index;
-	int			order;
+	int			size;
 };
 
 #define ENTRY_SIZE sizeof(struct dyn_ftrace)
@@ -1335,7 +1335,6 @@ static int ftrace_add_mod(struct trace_array *tr,
 	if (!ftrace_mod)
 		return -ENOMEM;
 
-	INIT_LIST_HEAD(&ftrace_mod->list);
 	ftrace_mod->func = kstrdup(func, GFP_KERNEL);
 	ftrace_mod->module = kstrdup(module, GFP_KERNEL);
 	ftrace_mod->enable = enable;
@@ -1585,8 +1584,7 @@ unsigned long ftrace_location_range(unsigned long start, unsigned long end)
 	key.flags = end;	/* overload flags, as it is unsigned long */
 
 	for (pg = ftrace_pages_start; pg; pg = pg->next) {
-		if (pg->index == 0 ||
-		    end < pg->records[0].ip ||
+		if (end < pg->records[0].ip ||
 		    start >= (pg->records[pg->index - 1].ip + MCOUNT_INSN_SIZE))
 			continue;
 		rec = bsearch(&key, pg->records, pg->index,
@@ -2867,16 +2865,6 @@ static int ftrace_startup(struct ftrace_ops *ops, int command)
 
 	ftrace_startup_enable(command);
 
-	/*
-	 * If ftrace is in an undefined state, we just remove ops from list
-	 * to prevent the NULL pointer, instead of totally rolling it back and
-	 * free trampoline, because those actions could cause further damage.
-	 */
-	if (unlikely(ftrace_disabled)) {
-		__unregister_ftrace_function(ops);
-		return -ENODEV;
-	}
-
 	ops->flags &= ~FTRACE_OPS_FL_ADDING;
 
 	return 0;
@@ -3032,8 +3020,6 @@ static void ftrace_shutdown_sysctl(void)
 
 static u64		ftrace_update_time;
 unsigned long		ftrace_update_tot_cnt;
-unsigned long		ftrace_number_of_pages;
-unsigned long		ftrace_number_of_groups;
 
 static inline int ops_traces_mod(struct ftrace_ops *ops)
 {
@@ -3154,15 +3140,12 @@ static int ftrace_allocate_records(struct ftrace_page *pg, int count)
 		/* if we can't allocate this size, try something smaller */
 		if (!order)
 			return -ENOMEM;
-		order--;
+		order >>= 1;
 		goto again;
 	}
 
-	ftrace_number_of_pages += 1 << order;
-	ftrace_number_of_groups++;
-
 	cnt = (PAGE_SIZE << order) / ENTRY_SIZE;
-	pg->order = order;
+	pg->size = cnt;
 
 	if (cnt > count)
 		cnt = count;
@@ -3170,27 +3153,12 @@ static int ftrace_allocate_records(struct ftrace_page *pg, int count)
 	return cnt;
 }
 
-static void ftrace_free_pages(struct ftrace_page *pages)
-{
-	struct ftrace_page *pg = pages;
-
-	while (pg) {
-		if (pg->records) {
-			free_pages((unsigned long)pg->records, pg->order);
-			ftrace_number_of_pages -= 1 << pg->order;
-		}
-		pages = pg->next;
-		kfree(pg);
-		pg = pages;
-		ftrace_number_of_groups--;
-	}
-}
-
 static struct ftrace_page *
 ftrace_allocate_pages(unsigned long num_to_init)
 {
 	struct ftrace_page *start_pg;
 	struct ftrace_page *pg;
+	int order;
 	int cnt;
 
 	if (!num_to_init)
@@ -3224,7 +3192,14 @@ ftrace_allocate_pages(unsigned long num_to_init)
 	return start_pg;
 
  free_pages:
-	ftrace_free_pages(start_pg);
+	pg = start_pg;
+	while (pg) {
+		order = get_count_order(pg->size / ENTRIES_PER_PAGE);
+		free_pages((unsigned long)pg->records, order);
+		start_pg = pg->next;
+		kfree(pg);
+		pg = start_pg;
+	}
 	pr_info("ftrace: FAILED to allocate memory for functions\n");
 	return NULL;
 }
@@ -5081,6 +5056,84 @@ int unregister_ftrace_direct(unsigned long ip, unsigned long addr)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(unregister_ftrace_direct);
+
+static struct ftrace_ops stub_ops = {
+	.func		= ftrace_stub,
+};
+
+/**
+ * modify_ftrace_direct - Modify an existing direct call to call something else
+ * @ip: The instruction pointer to modify
+ * @old_addr: The address that the current @ip calls directly
+ * @new_addr: The address that the @ip should call
+ *
+ * This modifies a ftrace direct caller at an instruction pointer without
+ * having to disable it first. The direct call will switch over to the
+ * @new_addr without missing anything.
+ *
+ * Returns: zero on success. Non zero on error, which includes:
+ *  -ENODEV : the @ip given has no direct caller attached
+ *  -EINVAL : the @old_addr does not match the current direct caller
+ */
+int modify_ftrace_direct(unsigned long ip,
+			 unsigned long old_addr, unsigned long new_addr)
+{
+	struct ftrace_func_entry *entry;
+	struct dyn_ftrace *rec;
+	int ret = -ENODEV;
+
+	mutex_lock(&direct_mutex);
+	entry = __ftrace_lookup_ip(direct_functions, ip);
+	if (!entry) {
+		/* OK if it is off by a little */
+		rec = lookup_rec(ip, ip);
+		if (!rec || rec->ip == ip)
+			goto out_unlock;
+
+		entry = __ftrace_lookup_ip(direct_functions, rec->ip);
+		if (!entry)
+			goto out_unlock;
+
+		ip = rec->ip;
+		WARN_ON(!(rec->flags & FTRACE_FL_DIRECT));
+	}
+
+	ret = -EINVAL;
+	if (entry->direct != old_addr)
+		goto out_unlock;
+
+	/*
+	 * By setting a stub function at the same address, we force
+	 * the code to call the iterator and the direct_ops helper.
+	 * This means that @ip does not call the direct call, and
+	 * we can simply modify it.
+	 */
+	ret = ftrace_set_filter_ip(&stub_ops, ip, 0, 0);
+	if (ret)
+		goto out_unlock;
+
+	ret = register_ftrace_function(&stub_ops);
+	if (ret) {
+		ftrace_set_filter_ip(&stub_ops, ip, 1, 0);
+		goto out_unlock;
+	}
+
+	entry->direct = new_addr;
+
+	/*
+	 * By removing the stub, we put back the direct call, calling
+	 * the @new_addr.
+	 */
+	unregister_ftrace_function(&stub_ops);
+	ftrace_set_filter_ip(&stub_ops, ip, 1, 0);
+
+	ret = 0;
+
+ out_unlock:
+	mutex_unlock(&direct_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(modify_ftrace_direct);
 #endif /* CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS */
 
 /**
@@ -5331,12 +5384,8 @@ int ftrace_regex_release(struct inode *inode, struct file *file)
 
 		if (filter_hash) {
 			orig_hash = &iter->ops->func_hash->filter_hash;
-			if (iter->tr) {
-				if (list_empty(&iter->tr->mod_trace))
-					iter->hash->flags &= ~FTRACE_HASH_FL_MOD;
-				else
-					iter->hash->flags |= FTRACE_HASH_FL_MOD;
-			}
+			if (iter->tr && !list_empty(&iter->tr->mod_trace))
+				iter->hash->flags |= FTRACE_HASH_FL_MOD;
 		} else
 			orig_hash = &iter->ops->func_hash->notrace_hash;
 
@@ -5861,11 +5910,9 @@ static int __norecordmcount ftrace_process_locs(struct module *mod,
 						unsigned long *start,
 						unsigned long *end)
 {
-	struct ftrace_page *pg_unuse = NULL;
 	struct ftrace_page *start_pg;
 	struct ftrace_page *pg;
 	struct dyn_ftrace *rec;
-	unsigned long skipped = 0;
 	unsigned long count;
 	unsigned long *p;
 	unsigned long addr;
@@ -5911,7 +5958,6 @@ static int __norecordmcount ftrace_process_locs(struct module *mod,
 	p = start;
 	pg = start_pg;
 	while (p < end) {
-		unsigned long end_offset;
 		addr = ftrace_call_adjust(*p++);
 		/*
 		 * Some architecture linkers will pad between
@@ -5919,13 +5965,10 @@ static int __norecordmcount ftrace_process_locs(struct module *mod,
 		 * object files to satisfy alignments.
 		 * Skip any NULL pointers.
 		 */
-		if (!addr) {
-			skipped++;
+		if (!addr)
 			continue;
-		}
 
-		end_offset = (pg->index+1) * sizeof(pg->records[0]);
-		if (end_offset > PAGE_SIZE << pg->order) {
+		if (pg->index == pg->size) {
 			/* We should have allocated enough */
 			if (WARN_ON(!pg->next))
 				break;
@@ -5936,10 +5979,8 @@ static int __norecordmcount ftrace_process_locs(struct module *mod,
 		rec->ip = addr;
 	}
 
-	if (pg->next) {
-		pg_unuse = pg->next;
-		pg->next = NULL;
-	}
+	/* We should have used all pages */
+	WARN_ON(pg->next);
 
 	/* Assign the last page to ftrace_pages */
 	ftrace_pages = pg;
@@ -5961,11 +6002,6 @@ static int __norecordmcount ftrace_process_locs(struct module *mod,
  out:
 	mutex_unlock(&ftrace_lock);
 
-	/* We should have used all pages unless we skipped some */
-	if (pg_unuse) {
-		WARN_ON(!skipped);
-		ftrace_free_pages(pg_unuse);
-	}
 	return ret;
 }
 
@@ -6072,6 +6108,7 @@ void ftrace_release_mod(struct module *mod)
 	struct ftrace_page **last_pg;
 	struct ftrace_page *tmp_page = NULL;
 	struct ftrace_page *pg;
+	int order;
 
 	mutex_lock(&ftrace_lock);
 
@@ -6122,13 +6159,10 @@ void ftrace_release_mod(struct module *mod)
 		/* Needs to be called outside of ftrace_lock */
 		clear_mod_from_hashes(pg);
 
-		if (pg->records) {
-			free_pages((unsigned long)pg->records, pg->order);
-			ftrace_number_of_pages -= 1 << pg->order;
-		}
+		order = get_count_order(pg->size / ENTRIES_PER_PAGE);
+		free_pages((unsigned long)pg->records, order);
 		tmp_page = pg->next;
 		kfree(pg);
-		ftrace_number_of_groups--;
 	}
 }
 
@@ -6434,6 +6468,7 @@ void ftrace_free_mem(struct module *mod, void *start_ptr, void *end_ptr)
 	struct ftrace_mod_map *mod_map = NULL;
 	struct ftrace_init_func *func, *func_next;
 	struct list_head clear_hash;
+	int order;
 
 	INIT_LIST_HEAD(&clear_hash);
 
@@ -6471,11 +6506,8 @@ void ftrace_free_mem(struct module *mod, void *start_ptr, void *end_ptr)
 		ftrace_update_tot_cnt--;
 		if (!pg->index) {
 			*last_pg = pg->next;
-			if (pg->records) {
-				free_pages((unsigned long)pg->records, pg->order);
-				ftrace_number_of_pages -= 1 << pg->order;
-			}
-			ftrace_number_of_groups--;
+			order = get_count_order(pg->size / ENTRIES_PER_PAGE);
+			free_pages((unsigned long)pg->records, order);
 			kfree(pg);
 			pg = container_of(last_pg, struct ftrace_page, next);
 			if (!(*last_pg))
@@ -6523,16 +6555,13 @@ void __init ftrace_init(void)
 	}
 
 	pr_info("ftrace: allocating %ld entries in %ld pages\n",
-		count, DIV_ROUND_UP(count, ENTRIES_PER_PAGE));
+		count, count / ENTRIES_PER_PAGE + 1);
 
 	last_ftrace_enabled = ftrace_enabled = 1;
 
 	ret = ftrace_process_locs(NULL,
 				  __start_mcount_loc,
 				  __stop_mcount_loc);
-
-	pr_info("ftrace: allocated %ld pages with %ld groups\n",
-		ftrace_number_of_pages, ftrace_number_of_groups);
 
 	set_ftrace_early_filters();
 
