@@ -180,13 +180,18 @@ enum {
 	NLA_S32,
 	NLA_S64,
 	NLA_BITFIELD32,
-	NLA_REJECT,
-	NLA_EXACT_LEN,
-	NLA_EXACT_LEN_WARN,
 	__NLA_TYPE_MAX,
 };
 
 #define NLA_TYPE_MAX (__NLA_TYPE_MAX - 1)
+
+struct netlink_range_validation {
+    u64 min, max;
+};
+
+struct netlink_range_validation_signed {
+    s64 min, max;
+};
 
 /**
  * struct nla_policy - attribute validation policy
@@ -211,22 +216,8 @@ enum {
  *    NLA_MSECS            Leaving the length field zero will verify the
  *                         given type fits, using it verifies minimum length
  *                         just like "All other"
- *    NLA_BITFIELD32       Unused
- *    NLA_REJECT           Unused
- *    NLA_EXACT_LEN        Attribute must have exactly this length, otherwise
- *                         it is rejected.
- *    NLA_EXACT_LEN_WARN   Attribute should have exactly this length, a warning
- *                         is logged if it is longer, shorter is rejected.
+ *    NLA_BITFIELD32      A 32-bit bitmap/bitselector attribute
  *    All other            Minimum length of attribute payload
- *
- * Meaning of `validation_data' field:
- *    NLA_BITFIELD32       This is a 32-bit bitmap/bitselector attribute and
- *                         validation data must point to a u32 value of valid
- *                         flags
- *    NLA_REJECT           This attribute is always rejected and validation data
- *                         may point to a string to report as the error instead
- *                         of the generic one in extended ACK.
- *    All other            Unused
  *
  * Example:
  * static const struct nla_policy my_policy[ATTR_MAX+1] = {
@@ -237,17 +228,43 @@ enum {
  * };
  */
 struct nla_policy {
-	u16		type;
-	u16		len;
+	u8      type;
+	u8      validation_type;
+	u16     len;
 	const void     *validation_data;
+	union {
+		const u32 bitfield32_valid;
+		const u32 mask;
+		const char *reject_message;
+		const struct nla_policy *nested_policy;
+		struct netlink_range_validation *range;
+		struct netlink_range_validation_signed *range_signed;
+		struct {
+			s16 min, max;
+		};
+		int (*validate)(const struct nlattr *attr,
+				struct netlink_ext_ack *extack);
+		/* This entry is special, and used for the attribute at index 0
+		 * only, and specifies special data about the policy, namely it
+		 * specifies the "boundary type" where strict length validation
+		 * starts for any attribute types >= this value, also, strict
+		 * nesting validation starts here.
+		 *
+		 * Additionally, it means that NLA_UNSPEC is actually NLA_REJECT
+		 * for any types >= this, so need to use NLA_POLICY_MIN_LEN() to
+		 * get the previous pure { .len = xyz } behaviour. The advantage
+		 * of this is that types not specified in the policy will be
+		 * rejected.
+		 *
+		 * For completely new families it should be set to 1 so that the
+		 * validation is enforced for all attributes. For existing ones
+		 * it should be set at least when new attributes are added to
+		 * the enum used by the policy, and be set to the new value that
+		 * was added to enforce strict validation from thereon.
+		 */
+		u16 strict_start_type;
+	};
 };
-
-#define NLA_POLICY_EXACT_LEN(_len)	{ .type = NLA_EXACT_LEN, .len = _len }
-#define NLA_POLICY_EXACT_LEN_WARN(_len)	{ .type = NLA_EXACT_LEN_WARN, \
-					  .len = _len }
-
-#define NLA_POLICY_ETH_ADDR		NLA_POLICY_EXACT_LEN(ETH_ALEN)
-#define NLA_POLICY_ETH_ADDR_COMPAT	NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN)
 
 /**
  * struct nl_info - netlink source information
