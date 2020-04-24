@@ -1309,8 +1309,7 @@ done:
 	(&((struct mpls_dev *)0)->field)
 
 static int mpls_conf_proc(struct ctl_table *ctl, int write,
-			  void __user *buffer,
-			  size_t *lenp, loff_t *ppos)
+			  void *buffer, size_t *lenp, loff_t *ppos)
 {
 	int oval = *(int *)ctl->data;
 	int ret = proc_dointvec(ctl, write, buffer, lenp, ppos);
@@ -1375,6 +1374,7 @@ static int mpls_dev_sysctl_register(struct net_device *dev,
 free:
 	kfree(table);
 out:
+	mdev->sysctl = NULL;
 	return -ENOBUFS;
 }
 
@@ -1383,6 +1383,9 @@ static void mpls_dev_sysctl_unregister(struct net_device *dev,
 {
 	struct net *net = dev_net(dev);
 	struct ctl_table *table;
+
+	if (!mdev->sysctl)
+		return;
 
 	table = mdev->sysctl->ctl_table_arg;
 	unregister_net_sysctl_table(mdev->sysctl);
@@ -2410,7 +2413,7 @@ nolabels:
 }
 
 static int mpls_platform_labels(struct ctl_table *table, int write,
-				void __user *buffer, size_t *lenp, loff_t *ppos)
+				void *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct net *net = table->data;
 	int platform_labels = net->mpls.platform_labels;

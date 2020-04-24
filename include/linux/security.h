@@ -182,7 +182,7 @@ struct request_sock;
 
 #ifdef CONFIG_MMU
 extern int mmap_min_addr_handler(struct ctl_table *table, int write,
-				 void __user *buffer, size_t *lenp, loff_t *ppos);
+				 void *buffer, size_t *lenp, loff_t *ppos);
 #endif
 
 /* security_inode_init_security callback function to write xattrs */
@@ -278,9 +278,10 @@ void security_bprm_committing_creds(struct linux_binprm *bprm);
 void security_bprm_committed_creds(struct linux_binprm *bprm);
 int security_sb_alloc(struct super_block *sb);
 void security_sb_free(struct super_block *sb);
-int security_sb_copy_data(char *orig, char *copy);
-int security_sb_remount(struct super_block *sb, void *data);
-int security_sb_kern_mount(struct super_block *sb, int flags, void *data);
+int security_sb_eat_lsm_opts(char *options, struct security_mnt_opts *opts);
+int security_sb_remount(struct super_block *sb, struct security_mnt_opts *opts);
+int security_sb_kern_mount(struct super_block *sb, int flags,
+			   struct security_mnt_opts *opts);
 int security_sb_show_options(struct seq_file *m, struct super_block *sb);
 int security_sb_statfs(struct dentry *dentry);
 int security_sb_mount(const char *dev_name, const struct path *path,
@@ -309,9 +310,6 @@ void security_inode_free(struct inode *inode);
 int security_inode_init_security(struct inode *inode, struct inode *dir,
 				 const struct qstr *qstr,
 				 initxattrs initxattrs, void *fs_data);
-int security_inode_init_security_anon(struct inode *inode,
-				      const struct qstr *name,
-				      const struct inode *context_inode);
 int security_old_inode_init_security(struct inode *inode, struct inode *dir,
 				     const struct qstr *qstr, const char **name,
 				     void **value, size_t *len);
@@ -352,8 +350,6 @@ int security_file_permission(struct file *file, int mask);
 int security_file_alloc(struct file *file);
 void security_file_free(struct file *file);
 int security_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
-int security_file_ioctl_compat(struct file *file, unsigned int cmd,
-			       unsigned long arg);
 int security_mmap_file(struct file *file, unsigned long prot,
 			unsigned long flags);
 int security_mmap_addr(unsigned long addr);
@@ -590,17 +586,20 @@ static inline int security_sb_alloc(struct super_block *sb)
 static inline void security_sb_free(struct super_block *sb)
 { }
 
-static inline int security_sb_copy_data(char *orig, char *copy)
+static inline int security_sb_eat_lsm_opts(char *options,
+					   struct security_mnt_opts *opts)
 {
 	return 0;
 }
 
-static inline int security_sb_remount(struct super_block *sb, void *data)
+static inline int security_sb_remount(struct super_block *sb,
+				      struct security_mnt_opts *opts)
 {
 	return 0;
 }
 
-static inline int security_sb_kern_mount(struct super_block *sb, int flags, void *data)
+static inline int security_sb_kern_mount(struct super_block *sb, int flags,
+					 struct security_mnt_opts *opts)
 {
 	return 0;
 }
@@ -686,13 +685,6 @@ static inline int security_inode_init_security(struct inode *inode,
 						const struct qstr *qstr,
 						const initxattrs xattrs,
 						void *fs_data)
-{
-	return 0;
-}
-
-static inline int security_inode_init_security_anon(struct inode *inode,
-						    const struct qstr *name,
-						    const struct inode *context_inode)
 {
 	return 0;
 }
@@ -876,13 +868,6 @@ static inline int security_file_ioctl(struct file *file, unsigned int cmd,
 	return 0;
 }
 
-static inline int security_file_ioctl_compat(struct file *file,
-					     unsigned int cmd,
-					     unsigned long arg)
-{
-	return 0;
-}
-
 static inline int security_mmap_file(struct file *file, unsigned long prot,
 				     unsigned long flags)
 {
@@ -961,11 +946,6 @@ static inline int security_prepare_creds(struct cred *new,
 static inline void security_transfer_creds(struct cred *new,
 					   const struct cred *old)
 {
-}
-
-static inline void security_cred_getsecid(const struct cred *c, u32 *secid)
-{
-	*secid = 0;
 }
 
 static inline int security_kernel_act_as(struct cred *cred, u32 secid)
@@ -1880,29 +1860,6 @@ static inline void security_bpf_prog_free(struct bpf_prog_aux *aux)
 { }
 #endif /* CONFIG_SECURITY */
 #endif /* CONFIG_BPF_SYSCALL */
-
-#ifdef CONFIG_SECURITY
-
-static inline char *alloc_secdata(void)
-{
-	return (char *)get_zeroed_page(GFP_KERNEL);
-}
-
-static inline void free_secdata(void *secdata)
-{
-	free_page((unsigned long)secdata);
-}
-
-#else
-
-static inline char *alloc_secdata(void)
-{
-        return (char *)1;
-}
-
-static inline void free_secdata(void *secdata)
-{ }
-#endif /* CONFIG_SECURITY */
 
 #ifdef CONFIG_PERF_EVENTS
 struct perf_event_attr;
