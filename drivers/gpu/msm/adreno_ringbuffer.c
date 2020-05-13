@@ -367,8 +367,11 @@ int adreno_ringbuffer_probe(struct adreno_device *adreno_dev)
 	int status = -ENOMEM;
 
 	if (!adreno_is_a3xx(adreno_dev)) {
-		unsigned int priv =
-			KGSL_MEMDESC_RANDOM | KGSL_MEMDESC_PRIVILEGED;
+		unsigned int priv = KGSL_MEMDESC_RANDOM;
+
+		/* For targets that support it, make the scratch privileged */
+		if (ADRENO_FEATURE(adreno_dev, ADRENO_APRIV))
+			priv |= KGSL_MEMDESC_PRIVILEGED;
 
 		status = kgsl_allocate_global(device, &device->scratch,
 				PAGE_SIZE, 0, priv, "scratch");
