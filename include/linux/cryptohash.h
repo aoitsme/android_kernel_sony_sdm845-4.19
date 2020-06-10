@@ -15,4 +15,10 @@
 void sha1_init(__u32 *buf);
 void sha1_transform(__u32 *digest, const char *data, __u32 *W);
 
+#define SHA_DIGEST_WORDS SHA1_DIGEST_WORDS
+#define SHA_WORKSPACE_WORDS SHA1_WORKSPACE_WORDS
+#define SHA_MESSAGE_BYTES SHA1_BLOCK_SIZE
+static inline void sha_init(__u32 *buf) { sha1_init(buf); }
+static inline void sha_transform(__u32 *digest, const char *data, __u32 *W) { sha1_transform(digest, data, W); }
+
 #endif
