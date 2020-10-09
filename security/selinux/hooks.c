@@ -871,8 +871,6 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 	    !strcmp(sb->s_type->name, "tracefs") ||
 	    !strcmp(sb->s_type->name, "sysfs") ||
 	    !strcmp(sb->s_type->name, "pstore") ||
-	    !strcmp(sb->s_type->name, "binder") ||
-	    !strcmp(sb->s_type->name, "bpf") ||
 	    !strcmp(sb->s_type->name, "cgroup") ||
 	    !strcmp(sb->s_type->name, "cgroup2"))
 		sbsec->flags |= SE_SBGENFS;
@@ -1226,6 +1224,33 @@ out_err:
 	kfree(defcontext);
 	kfree(fscontext);
 	kfree(rootcontext);
+	return rc;
+}
+/*
+ * string mount options parsing and call set the sbsec
+ */
+static int superblock_doinit(struct super_block *sb, void *data)
+{
+	int rc = 0;
+	char *options = data;
+	struct security_mnt_opts opts;
+
+	security_init_mnt_opts(&opts);
+
+	if (!data)
+		goto out;
+
+	BUG_ON(sb->s_type->fs_flags & FS_BINARY_MOUNTDATA);
+
+	rc = selinux_parse_opts_str(options, &opts);
+	if (rc)
+		goto out_err;
+
+out:
+	rc = selinux_set_mnt_opts(sb, &opts, 0, NULL);
+
+out_err:
+	security_free_mnt_opts(&opts);
 	return rc;
 }
 
@@ -1593,7 +1618,13 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 			 * inode_doinit with a dentry, before these inodes could
 			 * be used again by userspace.
 			 */
-			goto out_invalid;
+			isec->initialized = LABEL_INVALID;
+			/*
+			 * There is nothing useful to jump to the "out"
+			 * label, except a needless spin lock/unlock
+			 * cycle.
+			 */
+			return 0;
 		}
 
 		len = INITCONTEXTLEN;
@@ -1708,8 +1739,15 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 			 * inode_doinit() with a dentry, before these inodes
 			 * could be used again by userspace.
 			 */
-			if (!dentry)
-				goto out_invalid;
+			if (!dentry) {
+				isec->initialized = LABEL_INVALID;
+				/*
+				 * There is nothing useful to jump to the "out"
+				 * label, except a needless spin lock/unlock
+				 * cycle.
+				 */
+				return 0;
+			}
 			rc = selinux_genfs_get_sid(dentry, sclass,
 						   sbsec->flags, &sid);
 			dput(dentry);
@@ -1722,10 +1760,11 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 out:
 	spin_lock(&isec->lock);
 	if (isec->initialized == LABEL_PENDING) {
-		if (rc) {
+		if (!sid || rc) {
 			isec->initialized = LABEL_INVALID;
 			goto out_unlock;
 		}
+
 		isec->initialized = LABEL_INITIALIZED;
 		isec->sid = sid;
 	}
@@ -1733,15 +1772,6 @@ out:
 out_unlock:
 	spin_unlock(&isec->lock);
 	return rc;
-
-out_invalid:
-	spin_lock(&isec->lock);
-	if (isec->initialized == LABEL_PENDING) {
-		isec->initialized = LABEL_INVALID;
-		isec->sid = sid;
-	}
-	spin_unlock(&isec->lock);
-	return 0;
 }
 
 /* Convert a Linux signal to an access vector. */
@@ -2193,19 +2223,22 @@ static inline u32 open_file_to_av(struct file *file)
 
 /* Hook functions begin here. */
 
-static int selinux_binder_set_context_mgr(const struct cred *mgr)
+static int selinux_binder_set_context_mgr(struct task_struct *mgr)
 {
+	u32 mysid = current_sid();
+	u32 mgrsid = task_sid(mgr);
+
 	return avc_has_perm(&selinux_state,
-			    current_sid(), cred_sid(mgr), SECCLASS_BINDER,
+			    mysid, mgrsid, SECCLASS_BINDER,
 			    BINDER__SET_CONTEXT_MGR, NULL);
 }
 
-static int selinux_binder_transaction(const struct cred *from,
-				      const struct cred *to)
+static int selinux_binder_transaction(struct task_struct *from,
+				      struct task_struct *to)
 {
 	u32 mysid = current_sid();
-	u32 fromsid = cred_sid(from);
-	u32 tosid = cred_sid(to);
+	u32 fromsid = task_sid(from);
+	u32 tosid = task_sid(to);
 	int rc;
 
 	if (mysid != fromsid) {
@@ -2216,24 +2249,27 @@ static int selinux_binder_transaction(const struct cred *from,
 			return rc;
 	}
 
-	return avc_has_perm(&selinux_state, fromsid, tosid,
-			    SECCLASS_BINDER, BINDER__CALL, NULL);
-}
-
-static int selinux_binder_transfer_binder(const struct cred *from,
-					  const struct cred *to)
-{
 	return avc_has_perm(&selinux_state,
-			    cred_sid(from), cred_sid(to),
-			    SECCLASS_BINDER, BINDER__TRANSFER,
+			    fromsid, tosid, SECCLASS_BINDER, BINDER__CALL,
 			    NULL);
 }
 
-static int selinux_binder_transfer_file(const struct cred *from,
-					const struct cred *to,
+static int selinux_binder_transfer_binder(struct task_struct *from,
+					  struct task_struct *to)
+{
+	u32 fromsid = task_sid(from);
+	u32 tosid = task_sid(to);
+
+	return avc_has_perm(&selinux_state,
+			    fromsid, tosid, SECCLASS_BINDER, BINDER__TRANSFER,
+			    NULL);
+}
+
+static int selinux_binder_transfer_file(struct task_struct *from,
+					struct task_struct *to,
 					struct file *file)
 {
-	u32 sid = cred_sid(to);
+	u32 sid = task_sid(to);
 	struct file_security_struct *fsec = file->f_security;
 	struct dentry *dentry = file->f_path.dentry;
 	struct inode_security_struct *isec;
@@ -2840,22 +2876,39 @@ out:
 	return rc;
 }
 
-static int selinux_sb_remount(struct super_block *sb,
-			      struct security_mnt_opts *opts)
+static int selinux_sb_remount(struct super_block *sb, void *data)
 {
-	int i, *flags;
-	char **mount_options;
+	int rc, i, *flags;
+	struct security_mnt_opts opts;
+	char *secdata, **mount_options;
 	struct superblock_security_struct *sbsec = sb->s_security;
 
 	if (!(sbsec->flags & SE_SBINITIALIZED))
 		return 0;
 
-	mount_options = opts->mnt_opts;
-	flags = opts->mnt_opts_flags;
+	if (!data)
+		return 0;
 
-	for (i = 0; i < opts->num_mnt_opts; i++) {
+	if (sb->s_type->fs_flags & FS_BINARY_MOUNTDATA)
+		return 0;
+
+	security_init_mnt_opts(&opts);
+	secdata = alloc_secdata();
+	if (!secdata)
+		return -ENOMEM;
+	rc = selinux_sb_copy_data(data, secdata);
+	if (rc)
+		goto out_free_secdata;
+
+	rc = selinux_parse_opts_str(secdata, &opts);
+	if (rc)
+		goto out_free_secdata;
+
+	mount_options = opts.mnt_opts;
+	flags = opts.mnt_opts_flags;
+
+	for (i = 0; i < opts.num_mnt_opts; i++) {
 		u32 sid;
-		int rc;
 
 		if (flags[i] == SBLABEL_MNT)
 			continue;
@@ -2866,8 +2919,9 @@ static int selinux_sb_remount(struct super_block *sb,
 			pr_warn("SELinux: security_context_str_to_sid"
 			       "(%s) failed for (dev %s, type %s) errno=%d\n",
 			       mount_options[i], sb->s_id, sb->s_type->name, rc);
-			return rc;
+			goto out_free_opts;
 		}
+		rc = -EINVAL;
 		switch (flags[i]) {
 		case FSCONTEXT_MNT:
 			if (bad_option(sbsec, FSCONTEXT_MNT, sbsec->sid, sid))
@@ -2890,26 +2944,30 @@ static int selinux_sb_remount(struct super_block *sb,
 				goto out_bad_option;
 			break;
 		default:
-			return -EINVAL;
+			goto out_free_opts;
 		}
 	}
-	return 0;
 
+	rc = 0;
+out_free_opts:
+	security_free_mnt_opts(&opts);
+out_free_secdata:
+	free_secdata(secdata);
+	return rc;
 out_bad_option:
 	pr_warn("SELinux: unable to change security options "
 	       "during remount (dev %s, type=%s)\n", sb->s_id,
 	       sb->s_type->name);
-	return -EINVAL;
+	goto out_free_opts;
 }
 
-static int selinux_sb_kern_mount(struct super_block *sb, int flags,
-				 struct security_mnt_opts *opts)
+static int selinux_sb_kern_mount(struct super_block *sb, int flags, void *data)
 {
 	const struct cred *cred = current_cred();
 	struct common_audit_data ad;
 	int rc;
 
-	rc = selinux_set_mnt_opts(sb, opts, 0, NULL);
+	rc = superblock_doinit(sb, data);
 	if (rc)
 		return rc;
 
@@ -5761,7 +5819,7 @@ static unsigned int selinux_ip_postroute_compat(struct sk_buff *skb,
 	struct common_audit_data ad;
 	struct lsm_network_audit net = {0,};
 	char *addrp;
-	u8 proto = 0;
+	u8 proto;
 
 	if (sk == NULL)
 		return NF_ACCEPT;
@@ -6930,68 +6988,6 @@ static void selinux_bpf_prog_free(struct bpf_prog_aux *aux)
 }
 #endif
 
-
-#ifdef CONFIG_PERF_EVENTS
-static int selinux_perf_event_open(struct perf_event_attr *attr, int type)
-{
-	u32 requested, sid = current_sid();
-
-	if (type == PERF_SECURITY_OPEN)
-		requested = PERF_EVENT__OPEN;
-	else if (type == PERF_SECURITY_CPU)
-		requested = PERF_EVENT__CPU;
-	else if (type == PERF_SECURITY_KERNEL)
-		requested = PERF_EVENT__KERNEL;
-	else if (type == PERF_SECURITY_TRACEPOINT)
-		requested = PERF_EVENT__TRACEPOINT;
-	else
-		return -EINVAL;
-
-	return avc_has_perm(&selinux_state, sid, sid, SECCLASS_PERF_EVENT,
-			    requested, NULL);
-}
-
-static int selinux_perf_event_alloc(struct perf_event *event)
-{
-	struct perf_event_security_struct *perfsec;
-
-	perfsec = kzalloc(sizeof(*perfsec), GFP_KERNEL);
-	if (!perfsec)
-		return -ENOMEM;
-
-	perfsec->sid = current_sid();
-	event->security = perfsec;
-
-	return 0;
-}
-
-static void selinux_perf_event_free(struct perf_event *event)
-{
-	struct perf_event_security_struct *perfsec = event->security;
-
-	event->security = NULL;
-	kfree(perfsec);
-}
-
-static int selinux_perf_event_read(struct perf_event *event)
-{
-	struct perf_event_security_struct *perfsec = event->security;
-	u32 sid = current_sid();
-
-	return avc_has_perm(&selinux_state, sid, perfsec->sid,
-			    SECCLASS_PERF_EVENT, PERF_EVENT__READ, NULL);
-}
-
-static int selinux_perf_event_write(struct perf_event *event)
-{
-	struct perf_event_security_struct *perfsec = event->security;
-	u32 sid = current_sid();
-
-	return avc_has_perm(&selinux_state, sid, perfsec->sid,
-			    SECCLASS_PERF_EVENT, PERF_EVENT__WRITE, NULL);
-}
-#endif
-
 static struct security_hook_list selinux_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(binder_set_context_mgr, selinux_binder_set_context_mgr),
 	LSM_HOOK_INIT(binder_transaction, selinux_binder_transaction),
@@ -7227,14 +7223,6 @@ static struct security_hook_list selinux_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(bpf_map_free_security, selinux_bpf_map_free),
 	LSM_HOOK_INIT(bpf_prog_free_security, selinux_bpf_prog_free),
 #endif
-
-#ifdef CONFIG_PERF_EVENTS
-	LSM_HOOK_INIT(perf_event_open, selinux_perf_event_open),
-	LSM_HOOK_INIT(perf_event_alloc, selinux_perf_event_alloc),
-	LSM_HOOK_INIT(perf_event_free, selinux_perf_event_free),
-	LSM_HOOK_INIT(perf_event_read, selinux_perf_event_read),
-	LSM_HOOK_INIT(perf_event_write, selinux_perf_event_write),
-#endif
 };
 
 static __init int selinux_init(void)
@@ -7294,11 +7282,7 @@ static __init int selinux_init(void)
 
 static void delayed_superblock_init(struct super_block *sb, void *unused)
 {
-	struct security_mnt_opts opts;
-
-	security_init_mnt_opts(&opts);
-	selinux_set_mnt_opts(sb, &opts, 0, NULL);
-	security_free_mnt_opts(&opts);
+	superblock_doinit(sb, NULL);
 }
 
 void selinux_complete_init(void)
