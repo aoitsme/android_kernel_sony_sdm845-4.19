@@ -12,12 +12,6 @@
 
 #if GCC_VERSION < 40600
 # error Sorry, your compiler is too old - please upgrade it.
-#elif defined(CONFIG_ARM64) && GCC_VERSION < 50100
-/*
- * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=63293
- * https://lore.kernel.org/r/20210107111841.GN1551@shell.armlinux.org.uk
- */
-# error Sorry, your version of GCC is too old - please use 5.1 or newer.
 #endif
 
 /*
@@ -170,19 +164,13 @@
 #define KASAN_ABI_VERSION 3
 #endif
 
+#if GCC_VERSION >= 40902
 /*
- * Older GCCs (< 5) don't support __has_attribute, so instead of checking
- * __has_attribute(__no_sanitize_address__) do a GCC version check.
+ * Tell the compiler that address safety instrumentation (KASAN)
+ * should not be applied to that function.
+ * Conflicts with inlining: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=67368
  */
-#ifndef __has_attribute
-# define __has_attribute(x) __GCC4_has_attribute_##x
-# define __GCC4_has_attribute___no_sanitize_address__ (__GNUC_MINOR__ >= 8)
-#endif
-
-#if __has_attribute(__no_sanitize_address__)
 #define __no_sanitize_address __attribute__((no_sanitize_address))
-#else
-#define __no_sanitize_address
 #endif
 
 #if GCC_VERSION >= 50100
