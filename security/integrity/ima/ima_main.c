@@ -29,7 +29,6 @@
 #include <linux/ima.h>
 #include <linux/iversion.h>
 #include <linux/fs.h>
-#include <linux/iversion.h>
 
 #include "ima.h"
 
@@ -171,7 +170,7 @@ static int process_measurement(struct file *file, const struct cred *cred,
 			       u32 secid, char *buf, loff_t size, int mask,
 			       enum ima_hooks func)
 {
-	struct inode *backing_inode, *inode = file_inode(file);
+	struct inode *inode = file_inode(file);
 	struct integrity_iint_cache *iint = NULL;
 	struct ima_template_desc *template_desc;
 	char *pathbuf = NULL;
@@ -241,19 +240,6 @@ static int process_measurement(struct file *file, const struct cred *cred,
 	     !(action & IMA_FAIL_UNVERIFIABLE_SIGS))) {
 		iint->flags &= ~IMA_DONE_MASK;
 		iint->measured_pcrs = 0;
-	}
-
-	/* Detect and re-evaluate changes made to the backing file. */
-	backing_inode = d_real_inode(file_dentry(file));
-	if (backing_inode != inode &&
-	    (action & IMA_DO_MASK) && (iint->flags & IMA_DONE_MASK)) {
-		if (!IS_I_VERSION(backing_inode) ||
-		    backing_inode->i_sb->s_dev != iint->real_dev ||
-		    backing_inode->i_ino != iint->real_ino ||
-		    !inode_eq_iversion(backing_inode, iint->version)) {
-			iint->flags &= ~IMA_DONE_MASK;
-			iint->measured_pcrs = 0;
-		}
 	}
 
 	/* Determine if already appraised/measured based on bitmask
@@ -337,9 +323,7 @@ out:
 /**
  * ima_file_mmap - based on policy, collect/store measurement.
  * @file: pointer to the file to be measured (May be NULL)
- * @reqprot: protection requested by the application
- * @prot: protection that will be applied by the kernel
- * @flags: operational flags
+ * @prot: contains the protection that will be applied by the kernel.
  *
  * Measure files being mmapped executable based on the ima_must_measure()
  * policy decision.
@@ -347,8 +331,7 @@ out:
  * On success return 0.  On integrity appraisal error, assuming the file
  * is in policy and IMA-appraisal is in enforcing mode, return -EACCES.
  */
-int ima_file_mmap(struct file *file, unsigned long reqprot,
-		  unsigned long prot, unsigned long flags)
+int ima_file_mmap(struct file *file, unsigned long prot)
 {
 	u32 secid;
 
@@ -411,6 +394,31 @@ int ima_file_check(struct file *file, int mask)
 }
 EXPORT_SYMBOL_GPL(ima_file_check);
 
+static int __ima_inode_hash(struct inode *inode, char *buf, size_t buf_size)
+{
+	struct integrity_iint_cache *iint;
+	int hash_algo;
+
+	if (!ima_policy_flag)
+		return -EOPNOTSUPP;
+
+	iint = integrity_iint_find(inode);
+	if (!iint)
+		return -EOPNOTSUPP;
+
+	mutex_lock(&iint->mutex);
+	if (buf) {
+		size_t copied_size;
+
+		copied_size = min_t(size_t, iint->ima_hash->length, buf_size);
+		memcpy(buf, iint->ima_hash->digest, copied_size);
+	}
+	hash_algo = iint->ima_hash->algo;
+	mutex_unlock(&iint->mutex);
+
+	return hash_algo;
+}
+
 /**
  * ima_file_hash - return the stored measurement if a file has been hashed and
  * is in the iint cache.
@@ -431,34 +439,39 @@ EXPORT_SYMBOL_GPL(ima_file_check);
  */
 int ima_file_hash(struct file *file, char *buf, size_t buf_size)
 {
-	struct inode *inode;
-	struct integrity_iint_cache *iint;
-	int hash_algo;
-
 	if (!file)
 		return -EINVAL;
 
-	if (!ima_policy_flag)
-		return -EOPNOTSUPP;
-
-	inode = file_inode(file);
-	iint = integrity_iint_find(inode);
-	if (!iint)
-		return -EOPNOTSUPP;
-
-	mutex_lock(&iint->mutex);
-	if (buf) {
-		size_t copied_size;
-
-		copied_size = min_t(size_t, iint->ima_hash->length, buf_size);
-		memcpy(buf, iint->ima_hash->digest, copied_size);
-	}
-	hash_algo = iint->ima_hash->algo;
-	mutex_unlock(&iint->mutex);
-
-	return hash_algo;
+	return __ima_inode_hash(file_inode(file), buf, buf_size);
 }
 EXPORT_SYMBOL_GPL(ima_file_hash);
+
+/**
+ * ima_inode_hash - return the stored measurement if the inode has been hashed
+ * and is in the iint cache.
+ * @inode: pointer to the inode
+ * @buf: buffer in which to store the hash
+ * @buf_size: length of the buffer
+ *
+ * On success, return the hash algorithm (as defined in the enum hash_algo).
+ * If buf is not NULL, this function also outputs the hash into buf.
+ * If the hash is larger than buf_size, then only buf_size bytes will be copied.
+ * It generally just makes sense to pass a buffer capable of holding the largest
+ * possible hash: IMA_MAX_DIGEST_SIZE.
+ * The hash returned is based on the entire contents, including the appended
+ * signature.
+ *
+ * If IMA is disabled or if no measurement is available, return -EOPNOTSUPP.
+ * If the parameters are incorrect, return -EINVAL.
+ */
+int ima_inode_hash(struct inode *inode, char *buf, size_t buf_size)
+{
+	if (!inode)
+		return -EINVAL;
+
+	return __ima_inode_hash(inode, buf, buf_size);
+}
+EXPORT_SYMBOL_GPL(ima_inode_hash);
 
 /**
  * ima_post_create_tmpfile - mark newly created tmpfile as new
