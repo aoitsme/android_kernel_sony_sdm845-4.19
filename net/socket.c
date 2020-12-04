@@ -79,6 +79,7 @@
 #include <linux/module.h>
 #include <linux/highmem.h>
 #include <linux/mount.h>
+#include <linux/pseudo_fs.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/compat.h>
@@ -90,6 +91,7 @@
 #include <linux/slab.h>
 #include <linux/xattr.h>
 #include <linux/nospec.h>
+#include <linux/indirect_call_wrapper.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -107,6 +109,13 @@
 #include <linux/sockios.h>
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
+
+/* proto_ops for ipv4 and ipv6 use the same {recv,send}msg function */
+#if IS_ENABLED(CONFIG_INET)
+#define INDIRECT_CALL_INET4(f, f1, ...) INDIRECT_CALL_1(f, f1, __VA_ARGS__)
+#else
+#define INDIRECT_CALL_INET4(f, f1, ...) f(__VA_ARGS__)
+#endif
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
@@ -361,19 +370,22 @@ static const struct xattr_handler *sockfs_xattr_handlers[] = {
 	NULL
 };
 
-static struct dentry *sockfs_mount(struct file_system_type *fs_type,
-			 int flags, const char *dev_name, void *data)
+static int sockfs_init_fs_context(struct fs_context *fc)
 {
-	return mount_pseudo_xattr(fs_type, "socket:", &sockfs_ops,
-				  sockfs_xattr_handlers,
-				  &sockfs_dentry_operations, SOCKFS_MAGIC);
+	struct pseudo_fs_context *ctx = init_pseudo(fc, SOCKFS_MAGIC);
+	if (!ctx)
+		return -ENOMEM;
+	ctx->ops = &sockfs_ops;
+	ctx->dops = &sockfs_dentry_operations;
+	ctx->xattr = sockfs_xattr_handlers;
+	return 0;
 }
 
 static struct vfsmount *sock_mnt __read_mostly;
 
 static struct file_system_type sock_fs_type = {
 	.name =		"sockfs",
-	.mount =	sockfs_mount,
+	.init_fs_context = sockfs_init_fs_context,
 	.kill_sb =	kill_anon_super,
 };
 
@@ -449,17 +461,15 @@ static int sock_map_fd(struct socket *sock, int flags)
 /**
  *	sock_from_file - Return the &socket bounded to @file.
  *	@file: file
- *	@err: pointer to an error code return
  *
- *	On failure returns %NULL and assigns -ENOTSOCK to @err.
+ *	On failure returns %NULL.
  */
 
-struct socket *sock_from_file(struct file *file, int *err)
+struct socket *sock_from_file(struct file *file)
 {
 	if (file->f_op == &socket_file_ops)
 		return file->private_data;	/* set in sock_map_fd */
 
-	*err = -ENOTSOCK;
 	return NULL;
 }
 EXPORT_SYMBOL(sock_from_file);
@@ -488,9 +498,11 @@ struct socket *sockfd_lookup(int fd, int *err)
 		return NULL;
 	}
 
-	sock = sock_from_file(file, err);
-	if (!sock)
+	sock = sock_from_file(file);
+	if (!sock) {
+		*err = -ENOTSOCK;
 		fput(file);
+	}
 	return sock;
 }
 EXPORT_SYMBOL(sockfd_lookup);
@@ -502,11 +514,12 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 
 	*err = -EBADF;
 	if (f.file) {
-		sock = sock_from_file(f.file, err);
+		sock = sock_from_file(f.file);
 		if (likely(sock)) {
 			*fput_needed = f.flags & FDPUT_FPUT;
 			return sock;
 		}
+		*err = -ENOTSOCK;
 		fdput(f);
 	}
 	return NULL;
@@ -647,6 +660,24 @@ void __sock_tx_timestamp(__u16 tsflags, __u8 *tx_flags)
 }
 EXPORT_SYMBOL(__sock_tx_timestamp);
 
+INDIRECT_CALLABLE_DECLARE(int inet_sendmsg(struct socket *, struct msghdr *,
+					   size_t));
+static inline int sock_sendmsg_nosec(struct socket *sock, struct msghdr *msg)
+{
+	int ret = INDIRECT_CALL_INET4(sock->ops->sendmsg, inet_sendmsg, sock,
+				      msg, msg_data_left(msg));
+	BUG_ON(ret == -EIOCBQUEUED);
+	return ret;
+}
+
+static int __sock_sendmsg(struct socket *sock, struct msghdr *msg)
+{
+	int err = security_socket_sendmsg(sock, msg,
+					  msg_data_left(msg));
+
+	return err ?: sock_sendmsg_nosec(sock, msg);
+}
+
 /**
  *	sock_sendmsg - send a message through @sock
  *	@sock: socket
@@ -655,20 +686,23 @@ EXPORT_SYMBOL(__sock_tx_timestamp);
  *	Sends @msg through @sock, passing through LSM.
  *	Returns the number of bytes sent, or an error code.
  */
-
-static inline int sock_sendmsg_nosec(struct socket *sock, struct msghdr *msg)
-{
-	int ret = sock->ops->sendmsg(sock, msg, msg_data_left(msg));
-	BUG_ON(ret == -EIOCBQUEUED);
-	return ret;
-}
-
 int sock_sendmsg(struct socket *sock, struct msghdr *msg)
 {
-	int err = security_socket_sendmsg(sock, msg,
-					  msg_data_left(msg));
+	struct sockaddr_storage *save_addr = (struct sockaddr_storage *)msg->msg_name;
+	struct sockaddr_storage address;
+	int save_len = msg->msg_namelen;
+	int ret;
 
-	return err ?: sock_sendmsg_nosec(sock, msg);
+	if (msg->msg_name) {
+		memcpy(&address, msg->msg_name, msg->msg_namelen);
+		msg->msg_name = &address;
+	}
+
+	ret = __sock_sendmsg(sock, msg);
+	msg->msg_name = save_addr;
+	msg->msg_namelen = save_len;
+
+	return ret;
 }
 EXPORT_SYMBOL(sock_sendmsg);
 
@@ -853,6 +887,15 @@ void __sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk,
 }
 EXPORT_SYMBOL_GPL(__sock_recv_ts_and_drops);
 
+INDIRECT_CALLABLE_DECLARE(int inet_recvmsg(struct socket *, struct msghdr *,
+					   size_t , int ));
+static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
+				     int flags)
+{
+	return INDIRECT_CALL_INET4(sock->ops->recvmsg, inet_recvmsg, sock, msg,
+				   msg_data_left(msg), flags);
+}
+
 /**
  *	sock_recvmsg - receive a message from @sock
  *	@sock: socket
@@ -862,13 +905,6 @@ EXPORT_SYMBOL_GPL(__sock_recv_ts_and_drops);
  *	Receives @msg from @sock, passing through LSM. Returns the total number
  *	of bytes received, or an error.
  */
-
-static inline int sock_recvmsg_nosec(struct socket *sock, struct msghdr *msg,
-				     int flags)
-{
-	return sock->ops->recvmsg(sock, msg, msg_data_left(msg), flags);
-}
-
 int sock_recvmsg(struct socket *sock, struct msghdr *msg, int flags)
 {
 	int err = security_socket_recvmsg(sock, msg, msg_data_left(msg), flags);
@@ -973,7 +1009,7 @@ static ssize_t sock_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (sock->type == SOCK_SEQPACKET)
 		msg.msg_flags |= MSG_EOR;
 
-	res = sock_sendmsg(sock, &msg);
+	res = __sock_sendmsg(sock, &msg);
 	*from = msg.msg_iter;
 	return res;
 }
@@ -1608,9 +1644,10 @@ int __sys_bind(int fd, struct sockaddr __user *umyaddr, int addrlen)
 						      (struct sockaddr *)
 						      &address, addrlen);
 		}
-		fput_light(sock->file, fput_needed);
 		if (!err)
 			sockev_notify(SOCKEV_BIND, sock);
+
+		fput_light(sock->file, fput_needed);
 	}
 	return err;
 }
@@ -1634,7 +1671,7 @@ int __sys_listen(int fd, int backlog)
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
-		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
+		somaxconn = READ_ONCE(sock_net(sock->sk)->core.sysctl_somaxconn);
 		if ((unsigned int)backlog > somaxconn)
 			backlog = somaxconn;
 
@@ -1642,9 +1679,10 @@ int __sys_listen(int fd, int backlog)
 		if (!err)
 			err = sock->ops->listen(sock, backlog);
 
-		fput_light(sock->file, fput_needed);
 		if (!err)
 			sockev_notify(SOCKEV_LISTEN, sock);
+
+		fput_light(sock->file, fput_needed);
 	}
 	return err;
 }
@@ -1916,7 +1954,7 @@ int __sys_sendto(int fd, void __user *buff, size_t len, unsigned int flags,
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
 	msg.msg_flags = flags;
-	err = sock_sendmsg(sock, &msg);
+	err = __sock_sendmsg(sock, &msg);
 
 out_put:
 	fput_light(sock->file, fput_needed);
@@ -2275,7 +2313,7 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 		err = sock_sendmsg_nosec(sock, msg_sys);
 		goto out_freectl;
 	}
-	err = sock_sendmsg(sock, msg_sys);
+	err = __sock_sendmsg(sock, msg_sys);
 	/*
 	 * If this is sendmmsg() and sending to current destination address was
 	 * successful, remember it.
@@ -2606,7 +2644,7 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		 * error to return on the next call or if the
 		 * app asks about it using getsockopt(SO_ERROR).
 		 */
-		sock->sk->sk_err = -err;
+		WRITE_ONCE(sock->sk->sk_err, -err);
 	}
 out_put:
 	fput_light(sock->file, fput_needed);
@@ -3449,7 +3487,11 @@ static long compat_sock_ioctl(struct file *file, unsigned int cmd,
 
 int kernel_bind(struct socket *sock, struct sockaddr *addr, int addrlen)
 {
-	return sock->ops->bind(sock, addr, addrlen);
+	struct sockaddr_storage address;
+
+	memcpy(&address, addr, addrlen);
+
+	return sock->ops->bind(sock, (struct sockaddr *)&address, addrlen);
 }
 EXPORT_SYMBOL(kernel_bind);
 
@@ -3519,7 +3561,11 @@ EXPORT_SYMBOL(kernel_accept);
 int kernel_connect(struct socket *sock, struct sockaddr *addr, int addrlen,
 		   int flags)
 {
-	return sock->ops->connect(sock, addr, addrlen, flags);
+	struct sockaddr_storage address;
+
+	memcpy(&address, addr, addrlen);
+
+	return sock->ops->connect(sock, (struct sockaddr *)&address, addrlen, flags);
 }
 EXPORT_SYMBOL(kernel_connect);
 
