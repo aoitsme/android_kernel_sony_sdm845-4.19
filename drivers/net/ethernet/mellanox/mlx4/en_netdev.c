@@ -372,9 +372,6 @@ mlx4_en_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 	int nhoff = skb_network_offset(skb);
 	int ret = 0;
 
-	if (skb->encapsulation)
-		return -EPROTONOSUPPORT;
-
 	if (skb->protocol != htons(ETH_P_IP))
 		return -EPROTONOSUPPORT;
 
@@ -1744,7 +1741,6 @@ int mlx4_en_start_port(struct net_device *dev)
 				mlx4_en_deactivate_cq(priv, cq);
 				goto tx_err;
 			}
-			clear_bit(MLX4_EN_TX_RING_STATE_RECOVERING, &tx_ring->state);
 			if (t != TX_XDP) {
 				tx_ring->tx_queue = netdev_get_tx_queue(dev, i);
 				tx_ring->recycle_ring = NULL;
@@ -2282,14 +2278,9 @@ int mlx4_en_try_alloc_resources(struct mlx4_en_priv *priv,
 				bool carry_xdp_prog)
 {
 	struct bpf_prog *xdp_prog;
-	int i, t, ret;
+	int i, t;
 
-	ret = mlx4_en_copy_priv(tmp, priv, prof);
-	if (ret) {
-		en_warn(priv, "%s: mlx4_en_copy_priv() failed, return\n",
-			__func__);
-		return ret;
-	}
+	mlx4_en_copy_priv(tmp, priv, prof);
 
 	if (mlx4_en_alloc_resources(tmp)) {
 		en_warn(priv,
@@ -3675,8 +3666,6 @@ int mlx4_en_reset_config(struct net_device *dev,
 			en_err(priv, "Failed starting port\n");
 	}
 
-	if (!err)
-		err = mlx4_en_moderation_update(priv);
 out:
 	mutex_unlock(&mdev->state_lock);
 	kfree(tmp);
