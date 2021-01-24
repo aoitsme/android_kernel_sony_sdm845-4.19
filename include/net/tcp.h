@@ -148,9 +148,6 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 						 * most likely due to retrans in 3WHS.
 						 */
 
-/* Number of full MSS to receive before Acking RFC2581 */
-#define TCP_DELACK_SEG          1
-
 #define TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
 					                 * for local resources.
 					                 */
@@ -254,11 +251,6 @@ extern long sysctl_tcp_mem[3];
 #define TCP_RACK_NO_DUPTHRESH    0x4 /* Do not use DUPACK threshold in RACK */
 
 extern atomic_long_t tcp_memory_allocated;
-
-/* sysctl variables for controlling various tcp parameters */
-extern int sysctl_tcp_delack_seg;
-extern int sysctl_tcp_use_userconfig;
-
 extern struct percpu_counter tcp_sockets_allocated;
 extern unsigned long tcp_memory_pressure;
 
@@ -352,14 +344,6 @@ void tcp_twsk_destructor(struct sock *sk);
 ssize_t tcp_splice_read(struct socket *sk, loff_t *ppos,
 			struct pipe_inode_info *pipe, size_t len,
 			unsigned int flags);
-
-/* sysctl master controller */
-extern int tcp_use_userconfig_sysctl_handler(struct ctl_table *table,
-				int write, void __user *buffer, size_t *length,
-				loff_t *ppos);
-extern int tcp_proc_delayed_ack_control(struct ctl_table *table, int write,
-				void __user *buffer, size_t *length,
-				loff_t *ppos);
 
 void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks);
 static inline void tcp_dec_quickack_mode(struct sock *sk,
@@ -610,7 +594,6 @@ void tcp_synack_rtt_meas(struct sock *sk, struct request_sock *req);
 void tcp_reset(struct sock *sk);
 void tcp_skb_mark_lost_uncond_verify(struct tcp_sock *tp, struct sk_buff *skb);
 void tcp_fin(struct sock *sk);
-void tcp_check_space(struct sock *sk);
 
 /* tcp_timer.c */
 void tcp_init_xmit_timers(struct sock *);
@@ -1346,7 +1329,7 @@ static inline void tcp_sack_reset(struct tcp_options_received *rx_opt)
 	rx_opt->num_sacks = 0;
 }
 
-u32 tcp_default_init_rwnd(const struct sock *sk, u32 mss);
+u32 tcp_default_init_rwnd(u32 mss);
 void tcp_cwnd_restart(struct sock *sk, s32 delta);
 
 static inline void tcp_slow_start_after_idle_check(struct sock *sk)
@@ -1397,13 +1380,8 @@ static inline int tcp_full_space(const struct sock *sk)
  */
 static inline bool tcp_rmem_pressure(const struct sock *sk)
 {
-	int rcvbuf, threshold;
-
-	if (tcp_under_memory_pressure(sk))
-		return true;
-
-	rcvbuf = READ_ONCE(sk->sk_rcvbuf);
-	threshold = rcvbuf - (rcvbuf >> 3);
+	int rcvbuf = READ_ONCE(sk->sk_rcvbuf);
+	int threshold = rcvbuf - (rcvbuf >> 3);
 
 	return atomic_read(&sk->sk_rmem_alloc) > threshold;
 }
@@ -1897,7 +1875,7 @@ static inline u32 tcp_notsent_lowat(const struct tcp_sock *tp)
 static inline bool tcp_stream_memory_free(const struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
-	u32 notsent_bytes = READ_ONCE(tp->write_seq) - tp->snd_nxt;
+	u32 notsent_bytes = tp->write_seq - tp->snd_nxt;
 
 	return notsent_bytes < tcp_notsent_lowat(tp);
 }
@@ -1954,11 +1932,6 @@ struct tcp_request_sock_ops {
 			   struct tcp_fastopen_cookie *foc,
 			   enum tcp_synack_type synack_type);
 };
-
-extern const struct tcp_request_sock_ops tcp_request_sock_ipv4_ops;
-#if IS_ENABLED(CONFIG_IPV6)
-extern const struct tcp_request_sock_ops tcp_request_sock_ipv6_ops;
-#endif
 
 #ifdef CONFIG_SYN_COOKIES
 static inline __u32 cookie_init_sequence(const struct tcp_request_sock_ops *ops,
