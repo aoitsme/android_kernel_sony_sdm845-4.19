@@ -67,7 +67,6 @@
 #include <net/inet_hashtables.h>
 #include <net/inet6_hashtables.h>
 #include <net/ip_fib.h>
-#include <net/nexthop.h>
 #include <net/flow.h>
 #include <net/arp.h>
 #include <net/ipv6.h>
@@ -330,18 +329,22 @@ static u32 convert_skb_access(int skb_field, int dst_reg, int src_reg,
 		break;
 
 	case SKF_AD_VLAN_TAG:
+	case SKF_AD_VLAN_TAG_PRESENT:
 		BUILD_BUG_ON(sizeof_field(struct sk_buff, vlan_tci) != 2);
+		BUILD_BUG_ON(VLAN_TAG_PRESENT != 0x1000);
 
 		/* dst_reg = *(u16 *) (src_reg + offsetof(vlan_tci)) */
 		*insn++ = BPF_LDX_MEM(BPF_H, dst_reg, src_reg,
 				      offsetof(struct sk_buff, vlan_tci));
-		break;
-	case SKF_AD_VLAN_TAG_PRESENT:
-		*insn++ = BPF_LDX_MEM(BPF_B, dst_reg, src_reg, PKT_VLAN_PRESENT_OFFSET());
-		if (PKT_VLAN_PRESENT_BIT)
-			*insn++ = BPF_ALU32_IMM(BPF_RSH, dst_reg, PKT_VLAN_PRESENT_BIT);
-		if (PKT_VLAN_PRESENT_BIT < 7)
+		if (skb_field == SKF_AD_VLAN_TAG) {
+			*insn++ = BPF_ALU32_IMM(BPF_AND, dst_reg,
+						~VLAN_TAG_PRESENT);
+		} else {
+			/* dst_reg >>= 12 */
+			*insn++ = BPF_ALU32_IMM(BPF_RSH, dst_reg, 12);
+			/* dst_reg &= 1 */
 			*insn++ = BPF_ALU32_IMM(BPF_AND, dst_reg, 1);
+		}
 		break;
 	}
 
@@ -1510,7 +1513,7 @@ struct bpf_prog *__get_filter(struct sock_fprog *fprog, struct sock *sk)
 
 	if (copy_from_user(prog->insns, fprog->filter, fsize)) {
 		__bpf_prog_free(prog);
-		return ERR_PTR(-EFAULT);
+		return ERR_PTR(-EINVAL);
 	}
 
 	prog->len = fprog->len;
@@ -1608,7 +1611,7 @@ int sk_reuseport_attach_bpf(u32 ufd, struct sock *sk)
 		return -EPERM;
 
 	prog = bpf_prog_get_type(ufd, BPF_PROG_TYPE_SOCKET_FILTER);
-	if (PTR_ERR(prog) == -EINVAL)
+	if (IS_ERR(prog) && PTR_ERR(prog) == -EINVAL)
 		prog = bpf_prog_get_type(ufd, BPF_PROG_TYPE_SK_REUSEPORT);
 	if (IS_ERR(prog))
 		return PTR_ERR(prog);
@@ -5387,11 +5390,11 @@ static int bpf_fib_set_fwd_params(struct bpf_fib_lookup *params,
 static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 			       u32 flags, bool check_mtu)
 {
-	struct fib_nh_common *nhc;
 	struct in_device *in_dev;
 	struct neighbour *neigh;
 	struct net_device *dev;
 	struct fib_result res;
+	struct fib_nh *nh;
 	struct flowi4 fl4;
 	u32 mtu = 0;
 	int err;
@@ -5456,7 +5459,7 @@ static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 	if (res.type != RTN_UNICAST)
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-	if (fib_info_num_path(res.fi) > 1)
+	if (res.fi->fib_nhs > 1)
 		fib_select_path(net, &res, &fl4, NULL);
 
 	if (check_mtu) {
@@ -5467,13 +5470,15 @@ static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 		}
 	}
 
-	nhc = res.nhc;
+	nh = &res.fi->fib_nh[res.nh_sel];
 
 	/* do not handle lwt encaps right now */
-	if (nhc->nhc_lwtstate)
+	if (nh->fib_nh_lws)
 		return BPF_FIB_LKUP_RET_UNSUPP_LWT;
 
-	dev = nhc->nhc_dev;
+	dev = nh->fib_nh_dev;
+	if (nh->fib_nh_gw4)
+		params->ipv4_dst = nh->fib_nh_gw4;
 
 	params->rt_metric = res.fi->fib_priority;
 	params->ifindex = dev->ifindex;
@@ -5481,20 +5486,7 @@ static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 	/* xdp and cls_bpf programs are run in RCU-bh so
 	 * rcu_read_lock_bh is not needed here
 	 */
-	if (likely(nhc->nhc_gw_family != AF_INET6)) {
-		if (nhc->nhc_gw_family)
-			params->ipv4_dst = nhc->nhc_gw.ipv4;
-
-		neigh = __ipv4_neigh_lookup_noref(dev,
-						 (__force u32)params->ipv4_dst);
-	} else {
-		struct in6_addr *dst = (struct in6_addr *)params->ipv6_dst;
-
-		params->family = AF_INET6;
-		*dst = nhc->nhc_gw.ipv6;
-		neigh = __ipv6_neigh_lookup_noref_stub(dev, dst);
-	}
-
+	neigh = __ipv4_neigh_lookup_noref(dev, (__force u32)params->ipv4_dst);
 	if (!neigh || !(neigh->nud_state & NUD_VALID))
 		return BPF_FIB_LKUP_RET_NO_NEIGH;
 
@@ -5508,13 +5500,13 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 {
 	struct in6_addr *src = (struct in6_addr *) params->ipv6_src;
 	struct in6_addr *dst = (struct in6_addr *) params->ipv6_dst;
-	struct fib6_result res = {};
 	struct neighbour *neigh;
 	struct net_device *dev;
 	struct inet6_dev *idev;
+	struct fib6_info *f6i;
 	struct flowi6 fl6;
 	int strict = 0;
-	int oif, err;
+	int oif;
 	u32 mtu = 0;
 
 	/* link local addresses are never forwarded */
@@ -5556,54 +5548,56 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 		if (unlikely(!tb))
 			return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-		err = ipv6_stub->fib6_table_lookup(net, tb, oif, &fl6, &res,
-						   strict);
+		f6i = ipv6_stub->fib6_table_lookup(net, tb, oif, &fl6, strict);
 	} else {
 		fl6.flowi6_mark = 0;
 		fl6.flowi6_secid = 0;
 		fl6.flowi6_tun_key.tun_id = 0;
 		fl6.flowi6_uid = sock_net_uid(net, NULL);
 
-		err = ipv6_stub->fib6_lookup(net, oif, &fl6, &res, strict);
+		f6i = ipv6_stub->fib6_lookup(net, oif, &fl6, strict);
 	}
 
-	if (unlikely(err || IS_ERR_OR_NULL(res.f6i) ||
-		     res.f6i == net->ipv6.fib6_null_entry))
+	if (unlikely(IS_ERR_OR_NULL(f6i) || f6i == net->ipv6.fib6_null_entry))
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-	switch (res.fib6_type) {
-	/* only unicast is forwarded */
-	case RTN_UNICAST:
-		break;
-	case RTN_BLACKHOLE:
-		return BPF_FIB_LKUP_RET_BLACKHOLE;
-	case RTN_UNREACHABLE:
-		return BPF_FIB_LKUP_RET_UNREACHABLE;
-	case RTN_PROHIBIT:
-		return BPF_FIB_LKUP_RET_PROHIBIT;
-	default:
-		return BPF_FIB_LKUP_RET_NOT_FWDED;
+	if (unlikely(f6i->fib6_flags & RTF_REJECT)) {
+		switch (f6i->fib6_type) {
+		case RTN_BLACKHOLE:
+			return BPF_FIB_LKUP_RET_BLACKHOLE;
+		case RTN_UNREACHABLE:
+			return BPF_FIB_LKUP_RET_UNREACHABLE;
+		case RTN_PROHIBIT:
+			return BPF_FIB_LKUP_RET_PROHIBIT;
+		default:
+			return BPF_FIB_LKUP_RET_NOT_FWDED;
+		}
 	}
 
-	ipv6_stub->fib6_select_path(net, &res, &fl6, fl6.flowi6_oif,
-				    fl6.flowi6_oif != 0, NULL, strict);
+	if (f6i->fib6_type != RTN_UNICAST)
+		return BPF_FIB_LKUP_RET_NOT_FWDED;
+
+	if (f6i->fib6_nsiblings && fl6.flowi6_oif == 0)
+		f6i = ipv6_stub->fib6_multipath_select(net, f6i, &fl6,
+						       fl6.flowi6_oif, NULL,
+						       strict);
 
 	if (check_mtu) {
-		mtu = ipv6_stub->ip6_mtu_from_fib6(&res, dst, src);
+		mtu = ipv6_stub->ip6_mtu_from_fib6(f6i, dst, src);
 		if (params->tot_len > mtu) {
 			params->mtu_result = mtu; /* union with tot_len */
 			return BPF_FIB_LKUP_RET_FRAG_NEEDED;
 		}
 	}
 
-	if (res.nh->fib_nh_lws)
+	if (f6i->fib6_nh.nh_lwtstate)
 		return BPF_FIB_LKUP_RET_UNSUPP_LWT;
 
-	if (res.nh->fib_nh_gw_family)
-		*dst = res.nh->fib_nh_gw6;
+	if (f6i->fib6_flags & RTF_GATEWAY)
+		*dst = f6i->fib6_nh.nh_gw;
 
-	dev = res.nh->fib_nh_dev;
-	params->rt_metric = res.f6i->fib6_metric;
+	dev = f6i->fib6_nh.nh_dev;
+	params->rt_metric = f6i->fib6_metric;
 	params->ifindex = dev->ifindex;
 
 	/* xdp and cls_bpf programs are run in RCU-bh so rcu_read_lock_bh is
@@ -5729,7 +5723,7 @@ BPF_CALL_5(bpf_skb_check_mtu, struct sk_buff *, skb,
 	if (unlikely(flags & ~(BPF_MTU_CHK_SEGS)))
 		return -EINVAL;
 
-	if (unlikely(flags & BPF_MTU_CHK_SEGS && len_diff))
+	if (unlikely(flags & BPF_MTU_CHK_SEGS && (len_diff || *mtu_len)))
 		return -EINVAL;
 
 	dev = __dev_via_ifindex(dev, ifindex);
@@ -5739,7 +5733,11 @@ BPF_CALL_5(bpf_skb_check_mtu, struct sk_buff *, skb,
 	mtu = READ_ONCE(dev->mtu);
 
 	dev_len = mtu + dev->hard_header_len;
-	skb_len = skb->len + len_diff; /* minus result pass check */
+
+	/* If set use *mtu_len as input, L3 as iph->tot_len (like fib_lookup) */
+	skb_len = *mtu_len ? *mtu_len + dev->hard_header_len : skb->len;
+
+	skb_len += len_diff; /* minus result pass check */
 	if (skb_len <= dev_len) {
 		ret = BPF_MTU_CHK_RET_SUCCESS;
 		goto out;
@@ -5783,6 +5781,10 @@ BPF_CALL_5(bpf_xdp_check_mtu, struct xdp_buff *, xdp,
 
 	/* Add L2-header as dev MTU is L3 size */
 	dev_len = mtu + dev->hard_header_len;
+
+	/* Use *mtu_len as input, L3 as iph->tot_len (like fib_lookup) */
+	if (*mtu_len)
+		xdp_len = *mtu_len + dev->hard_header_len;
 
 	xdp_len += len_diff; /* minus result pass check */
 	if (xdp_len > dev_len)
@@ -6647,16 +6649,12 @@ BPF_CALL_1(bpf_skb_ecn_set_ce, struct sk_buff *, skb)
 {
 	unsigned int iphdr_len;
 
-	switch (skb_protocol(skb, true)) {
-	case cpu_to_be16(ETH_P_IP):
+	if (skb->protocol == cpu_to_be16(ETH_P_IP))
 		iphdr_len = sizeof(struct iphdr);
-		break;
-	case cpu_to_be16(ETH_P_IPV6):
+	else if (skb->protocol == cpu_to_be16(ETH_P_IPV6))
 		iphdr_len = sizeof(struct ipv6hdr);
-		break;
-	default:
+	else
 		return 0;
-	}
 
 	if (skb_headlen(skb) < iphdr_len)
 		return 0;
@@ -8670,19 +8668,19 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 		break;
 
 	case offsetof(struct __sk_buff, vlan_present):
-		*target_size = 1;
-		*insn++ = BPF_LDX_MEM(BPF_B, si->dst_reg, si->src_reg,
-				      PKT_VLAN_PRESENT_OFFSET());
-		if (PKT_VLAN_PRESENT_BIT)
-			*insn++ = BPF_ALU32_IMM(BPF_RSH, si->dst_reg, PKT_VLAN_PRESENT_BIT);
-		if (PKT_VLAN_PRESENT_BIT < 7)
-			*insn++ = BPF_ALU32_IMM(BPF_AND, si->dst_reg, 1);
-		break;
-
 	case offsetof(struct __sk_buff, vlan_tci):
+		BUILD_BUG_ON(VLAN_TAG_PRESENT != 0x1000);
+
 		*insn++ = BPF_LDX_MEM(BPF_H, si->dst_reg, si->src_reg,
 				      bpf_target_off(struct sk_buff, vlan_tci, 2,
 						     target_size));
+		if (si->off == offsetof(struct __sk_buff, vlan_tci)) {
+			*insn++ = BPF_ALU32_IMM(BPF_AND, si->dst_reg,
+						~VLAN_TAG_PRESENT);
+		} else {
+			*insn++ = BPF_ALU32_IMM(BPF_RSH, si->dst_reg, 12);
+			*insn++ = BPF_ALU32_IMM(BPF_AND, si->dst_reg, 1);
+		}
 		break;
 
 	case offsetof(struct __sk_buff, cb[0]) ...
@@ -10337,7 +10335,7 @@ sk_reuseport_is_valid_access(int off, int size,
 	case bpf_ctx_range(struct sk_reuseport_md, eth_protocol):
 		if (size < sizeof_field(struct sk_buff, protocol))
 			return false;
-		fallthrough;
+		/* fall through */
 	case bpf_ctx_range(struct sk_reuseport_md, ip_protocol):
 	case bpf_ctx_range(struct sk_reuseport_md, bind_inany):
 	case bpf_ctx_range(struct sk_reuseport_md, len):
