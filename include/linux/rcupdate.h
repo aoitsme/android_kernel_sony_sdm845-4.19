@@ -464,6 +464,12 @@ static inline void rcu_preempt_sleep_check(void) { }
 	(ptr) = __tmp;							\
 } while (0)
 
+#define rcu_replace_pointer(rcu_ptr, ptr, c) ({				\
+	typeof(ptr) __tmp = rcu_dereference_protected((rcu_ptr), (c));	\
+	rcu_assign_pointer((rcu_ptr), (ptr));				\
+	__tmp;								\
+})
+
 /**
  * rcu_access_pointer() - fetch RCU pointer with no dereferencing
  * @p: The pointer to read

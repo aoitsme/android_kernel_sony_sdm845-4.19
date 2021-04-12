@@ -99,6 +99,8 @@
 #include <net/cls_cgroup.h>
 
 #include <net/sock.h>
+#include <linux/indirect_call_wrapper.h>
+#include <net/tcp.h>
 #include <linux/netfilter.h>
 
 #include <linux/if_tun.h>

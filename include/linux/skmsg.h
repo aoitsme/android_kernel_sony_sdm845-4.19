@@ -5,6 +5,7 @@
 #define _LINUX_SKMSG_H
 
 #include <linux/bpf.h>
+#include <linux/build_bug.h>
 #include <linux/filter.h>
 #include <linux/scatterlist.h>
 #include <linux/skbuff.h>

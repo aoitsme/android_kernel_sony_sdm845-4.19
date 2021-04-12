@@ -1113,7 +1113,8 @@ static int bpf_send_signal_common(u32 sig, enum pid_type type)
 		 * to the irq_work. The current task may change when queued
 		 * irq works get executed.
 		 */
-		work->task = get_task_struct(current);
+		get_task_struct(current);
+		work->task = current;
 		work->sig = sig;
 		work->type = type;
 		irq_work_queue(&work->irq_work);
@@ -2211,7 +2212,7 @@ int bpf_get_perf_event_info(const struct perf_event *event, u32 *prog_id,
 #ifdef CONFIG_UPROBE_EVENTS
 		if (flags & TRACE_EVENT_FL_UPROBE)
 			err = bpf_get_uprobe_info(event, fd_type, buf,
-						  probe_offset, probe_addr,
+						  probe_offset,
 						  event->attr.type == PERF_TYPE_TRACEPOINT);
 #endif
 	}
