@@ -784,11 +784,6 @@ void security_bprm_committed_creds(struct linux_binprm *bprm)
 	call_void_hook(bprm_committed_creds, bprm);
 }
 
-int security_fs_context_parse_param(struct fs_context *fc, struct fs_parameter *param)
-{
-	return call_int_hook(fs_context_parse_param, -ENOPARAM, fc, param);
-}
-
 int security_sb_alloc(struct super_block *sb)
 {
 	return call_int_hook(sb_alloc_security, 0, sb);
@@ -799,31 +794,31 @@ void security_sb_free(struct super_block *sb)
 	call_void_hook(sb_free_security, sb);
 }
 
-void security_free_mnt_opts(void **mnt_opts)
+int security_sb_eat_lsm_opts(char *options, struct security_mnt_opts *opts)
 {
-	if (!*mnt_opts)
-		return;
-	call_void_hook(sb_free_mnt_opts, *mnt_opts);
-	*mnt_opts = NULL;
-}
-EXPORT_SYMBOL(security_free_mnt_opts);
+	char *s = (char *)get_zeroed_page(GFP_KERNEL);
+	int err;
 
-int security_sb_eat_lsm_opts(char *options, void **mnt_opts)
-{
-	return call_int_hook(sb_eat_lsm_opts, 0, options, mnt_opts);
+	if (!s)
+		return -ENOMEM;
+	err = call_int_hook(sb_copy_data, 0, options, s);
+	if (!err)
+		err = call_int_hook(sb_parse_opts_str, 0, s, opts);
+	free_page((unsigned long)s);
+	return err;
 }
 EXPORT_SYMBOL(security_sb_eat_lsm_opts);
 
 int security_sb_remount(struct super_block *sb,
-			void *mnt_opts)
+			struct security_mnt_opts *opts)
 {
-	return call_int_hook(sb_remount, 0, sb, mnt_opts);
+	return call_int_hook(sb_remount, 0, sb, opts);
 }
-EXPORT_SYMBOL(security_sb_remount);
 
-int security_sb_kern_mount(struct super_block *sb)
+int security_sb_kern_mount(struct super_block *sb, int flags,
+			   struct security_mnt_opts *opts)
 {
-	return call_int_hook(sb_kern_mount, 0, sb);
+	return call_int_hook(sb_kern_mount, 0, sb, flags, opts);
 }
 
 int security_sb_show_options(struct seq_file *m, struct super_block *sb)
@@ -853,13 +848,13 @@ int security_sb_pivotroot(const struct path *old_path, const struct path *new_pa
 }
 
 int security_sb_set_mnt_opts(struct super_block *sb,
-				void *mnt_opts,
+				struct security_mnt_opts *opts,
 				unsigned long kern_flags,
 				unsigned long *set_kern_flags)
 {
 	return call_int_hook(sb_set_mnt_opts,
-				mnt_opts ? -EOPNOTSUPP : 0, sb,
-				mnt_opts, kern_flags, set_kern_flags);
+				opts->num_mnt_opts ? -EOPNOTSUPP : 0, sb,
+				opts, kern_flags, set_kern_flags);
 }
 EXPORT_SYMBOL(security_sb_set_mnt_opts);
 
@@ -873,13 +868,11 @@ int security_sb_clone_mnt_opts(const struct super_block *oldsb,
 }
 EXPORT_SYMBOL(security_sb_clone_mnt_opts);
 
-int security_add_mnt_opt(const char *option, const char *val, int len,
-			 void **mnt_opts)
+int security_sb_parse_opts_str(char *options, struct security_mnt_opts *opts)
 {
-	return call_int_hook(sb_add_mnt_opt, -EINVAL,
-					option, val, len, mnt_opts);
+	return call_int_hook(sb_parse_opts_str, 0, options, opts);
 }
-EXPORT_SYMBOL(security_add_mnt_opt);
+EXPORT_SYMBOL(security_sb_parse_opts_str);
 
 int security_inode_alloc(struct inode *inode)
 {
@@ -923,8 +916,18 @@ int security_dentry_init_security(struct dentry *dentry, int mode,
 					const struct qstr *name, void **ctx,
 					u32 *ctxlen)
 {
-	return call_int_hook(dentry_init_security, -EOPNOTSUPP, dentry, mode,
-				name, ctx, ctxlen);
+	struct security_hook_list *hp;
+	int rc;
+
+	/*
+	 * Only one module will provide a security context.
+	 */
+	hlist_for_each_entry(hp, &security_hook_heads.dentry_init_security, list) {
+		rc = hp->hook.dentry_init_security(dentry, mode, name, ctx, ctxlen);
+		if (rc != LSM_RET_DEFAULT(dentry_init_security))
+			return rc;
+	}
+	return LSM_RET_DEFAULT(dentry_init_security);
 }
 EXPORT_SYMBOL(security_dentry_init_security);
 
@@ -971,14 +974,6 @@ out:
 	return (ret == -EOPNOTSUPP) ? 0 : ret;
 }
 EXPORT_SYMBOL(security_inode_init_security);
-
-int security_inode_init_security_anon(struct inode *inode,
-				      const struct qstr *name,
-				      const struct inode *context_inode)
-{
-	return call_int_hook(inode_init_security_anon, 0, inode, name,
-			     context_inode);
-}
 
 int security_old_inode_init_security(struct inode *inode, struct inode *dir,
 				     const struct qstr *qstr, const char **name,
@@ -1404,23 +1399,6 @@ int security_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return call_int_hook(file_ioctl, 0, file, cmd, arg);
 }
 
-/**
- * security_file_ioctl_compat() - Check if an ioctl is allowed in compat mode
- * @file: associated file
- * @cmd: ioctl cmd
- * @arg: ioctl arguments
- *
- * Compat version of security_file_ioctl() that correctly handles 32-bit
- * processes running on 64-bit kernels.
- *
- * Return: Returns 0 if permission is granted.
- */
-int security_file_ioctl_compat(struct file *file, unsigned int cmd,
-			       unsigned long arg)
-{
-	return call_int_hook(file_ioctl_compat, 0, file, cmd, arg);
-}
-
 static inline unsigned long mmap_prot(struct file *file, unsigned long prot)
 {
 	/*
@@ -1457,20 +1435,18 @@ static inline unsigned long mmap_prot(struct file *file, unsigned long prot)
 int security_mmap_file(struct file *file, unsigned long prot,
 			unsigned long flags)
 {
-	unsigned long prot_adj = mmap_prot(file, prot);
 	int ret;
-
-	ret = call_int_hook(mmap_file, 0, file, prot, prot_adj, flags);
+	ret = call_int_hook(mmap_file, 0, file, prot,
+					mmap_prot(file, prot), flags);
 	if (ret)
 		return ret;
-	return ima_file_mmap(file, prot, prot_adj, flags);
+	return ima_file_mmap(file, prot);
 }
 
 int security_mmap_addr(unsigned long addr)
 {
 	return call_int_hook(mmap_addr, 0, addr);
 }
-EXPORT_SYMBOL_GPL(security_mmap_addr);
 
 int security_file_mprotect(struct vm_area_struct *vma, unsigned long reqprot,
 			    unsigned long prot)
