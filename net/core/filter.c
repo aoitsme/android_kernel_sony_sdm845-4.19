@@ -1226,10 +1226,11 @@ void sk_filter_uncharge(struct sock *sk, struct sk_filter *fp)
 static bool __sk_filter_charge(struct sock *sk, struct sk_filter *fp)
 {
 	u32 filter_size = bpf_prog_size(fp->prog->len);
+	int optmem_max = READ_ONCE(sysctl_optmem_max);
 
 	/* same check as in sock_kmalloc() */
-	if (filter_size <= sysctl_optmem_max &&
-	    atomic_read(&sk->sk_omem_alloc) + filter_size < sysctl_optmem_max) {
+	if (filter_size <= optmem_max &&
+	    atomic_read(&sk->sk_omem_alloc) + filter_size < optmem_max) {
 		atomic_add(filter_size, &sk->sk_omem_alloc);
 		return true;
 	}
@@ -1561,7 +1562,7 @@ int sk_reuseport_attach_filter(struct sock_fprog *fprog, struct sock *sk)
 	if (IS_ERR(prog))
 		return PTR_ERR(prog);
 
-	if (bpf_prog_size(prog->len) > sysctl_optmem_max)
+	if (bpf_prog_size(prog->len) > READ_ONCE(sysctl_optmem_max))
 		err = -ENOMEM;
 	else
 		err = reuseport_attach_prog(sk, prog);
@@ -1628,7 +1629,7 @@ int sk_reuseport_attach_bpf(u32 ufd, struct sock *sk)
 		}
 	} else {
 		/* BPF_PROG_TYPE_SOCKET_FILTER */
-		if (bpf_prog_size(prog->len) > sysctl_optmem_max) {
+		if (bpf_prog_size(prog->len) > READ_ONCE(sysctl_optmem_max)) {
 			err = -ENOMEM;
 			goto err_prog_put;
 		}
@@ -5338,11 +5339,11 @@ static int bpf_fib_set_fwd_params(struct bpf_fib_lookup *params,
 static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 			       u32 flags, bool check_mtu)
 {
+	struct fib_nh_common *nhc;
 	struct in_device *in_dev;
 	struct neighbour *neigh;
 	struct net_device *dev;
 	struct fib_result res;
-	struct fib_nh *nh;
 	struct flowi4 fl4;
 	int err;
 	u32 mtu;
@@ -5416,15 +5417,15 @@ static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 			return BPF_FIB_LKUP_RET_FRAG_NEEDED;
 	}
 
-	nh = &res.fi->fib_nh[res.nh_sel];
+	nhc = res.nhc;
 
 	/* do not handle lwt encaps right now */
-	if (nh->fib_nh_lws)
+	if (nhc->nhc_lwtstate)
 		return BPF_FIB_LKUP_RET_UNSUPP_LWT;
 
-	dev = nh->fib_nh_dev;
-	if (nh->fib_nh_gw4)
-		params->ipv4_dst = nh->fib_nh_gw4;
+	dev = nhc->nhc_dev;
+	if (nhc->nhc_gw_family)
+		params->ipv4_dst = nhc->nhc_gw.ipv4;
 
 	params->rt_metric = res.fi->fib_priority;
 	params->ifindex = dev->ifindex;
@@ -5447,12 +5448,12 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 	struct in6_addr *src = (struct in6_addr *) params->ipv6_src;
 	struct in6_addr *dst = (struct in6_addr *) params->ipv6_dst;
 	struct neighbour *neigh;
+	struct fib6_result res;
 	struct net_device *dev;
 	struct inet6_dev *idev;
-	struct fib6_info *f6i;
 	struct flowi6 fl6;
 	int strict = 0;
-	int oif;
+	int oif, err;
 	u32 mtu;
 
 	/* link local addresses are never forwarded */
@@ -5494,21 +5495,23 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 		if (unlikely(!tb))
 			return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-		f6i = ipv6_stub->fib6_table_lookup(net, tb, oif, &fl6, strict);
+		err = ipv6_stub->fib6_table_lookup(net, tb, oif, &fl6, &res,
+						   strict);
 	} else {
 		fl6.flowi6_mark = 0;
 		fl6.flowi6_secid = 0;
 		fl6.flowi6_tun_key.tun_id = 0;
 		fl6.flowi6_uid = sock_net_uid(net, NULL);
 
-		f6i = ipv6_stub->fib6_lookup(net, oif, &fl6, strict);
+		err = ipv6_stub->fib6_lookup(net, oif, &fl6, &res, strict);
 	}
 
-	if (unlikely(IS_ERR_OR_NULL(f6i) || f6i == net->ipv6.fib6_null_entry))
+	if (unlikely(err || IS_ERR_OR_NULL(res.f6i) ||
+		     res.f6i == net->ipv6.fib6_null_entry))
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-	if (unlikely(f6i->fib6_flags & RTF_REJECT)) {
-		switch (f6i->fib6_type) {
+	if (unlikely(res.f6i->fib6_flags & RTF_REJECT)) {
+		switch (res.f6i->fib6_type) {
 		case RTN_BLACKHOLE:
 			return BPF_FIB_LKUP_RET_BLACKHOLE;
 		case RTN_UNREACHABLE:
@@ -5520,28 +5523,26 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 		}
 	}
 
-	if (f6i->fib6_type != RTN_UNICAST)
+	if (res.f6i->fib6_type != RTN_UNICAST)
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-	if (f6i->fib6_nsiblings && fl6.flowi6_oif == 0)
-		f6i = ipv6_stub->fib6_multipath_select(net, f6i, &fl6,
-						       fl6.flowi6_oif, NULL,
-						       strict);
+	ipv6_stub->fib6_select_path(net, &res, &fl6, fl6.flowi6_oif,
+				    fl6.flowi6_oif != 0, NULL, strict);
 
 	if (check_mtu) {
-		mtu = ipv6_stub->ip6_mtu_from_fib6(f6i, dst, src);
+		mtu = ipv6_stub->ip6_mtu_from_fib6(res.f6i, dst, src);
 		if (params->tot_len > mtu)
 			return BPF_FIB_LKUP_RET_FRAG_NEEDED;
 	}
 
-	if (f6i->fib6_nh.nh_lwtstate)
+	if (res.nh->fib_nh_lws)
 		return BPF_FIB_LKUP_RET_UNSUPP_LWT;
 
-	if (f6i->fib6_flags & RTF_GATEWAY)
-		*dst = f6i->fib6_nh.nh_gw;
+	if (res.nh->fib_nh_gw_family)
+		*dst = res.nh->fib_nh_gw6;
 
-	dev = f6i->fib6_nh.nh_dev;
-	params->rt_metric = f6i->fib6_metric;
+	dev = res.nh->fib_nh_dev;
+	params->rt_metric = res.f6i->fib6_metric;
 	params->ifindex = dev->ifindex;
 
 	/* xdp and cls_bpf programs are run in RCU-bh so rcu_read_lock_bh is
