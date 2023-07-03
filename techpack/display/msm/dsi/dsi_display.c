@@ -5470,8 +5470,11 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 
 		/* The panel name should be same as UEFI name index */
 		panel_node = of_find_node_by_name(mdp_node, boot_disp->name);
-		if (!panel_node)
-			DSI_WARN("panel_node %s not found\n", boot_disp->name);
+		if (!panel_node) {
+			DSI_WARN("panel_node %s not found, falling back to default\n", boot_disp->name);
+			panel_node = of_parse_phandle(node,
+					"qcom,dsi-default-panel", 0);
+		}
 	} else {
 		panel_node = of_parse_phandle(node,
 				"qcom,dsi-default-panel", 0);
