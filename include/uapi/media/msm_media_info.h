@@ -860,6 +860,8 @@ invalid_input:
 	return stride;
 }
 
+#include <media/msm_vidc.h>
+
 /*
  * Function arguments:
  * @color_fmt
