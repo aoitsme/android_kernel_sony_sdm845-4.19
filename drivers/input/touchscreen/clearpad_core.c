@@ -4680,8 +4680,10 @@ static void clearpad_funcarea_invalidate_all(struct clearpad_t *this)
 			clearpad_funcarea_up(this, pointer);
 	}
 	clearpad_funcarea_report_extra_events(this);
-	if (this->input->users)
+	if (this->input->users) {
+		input_report_key(this->input, BTN_TOUCH, 0);
 		input_sync(this->input);
+	}
 }
 
 static void clearpad_parse_finger_n_f12(struct clearpad_t *this,
@@ -4832,6 +4834,9 @@ static int clearpad_read_fingers_f12(struct clearpad_t *this)
 
 	for (finger = 0; finger < this->extents.n_fingers; finger++)
 		clearpad_report_finger_n(this, buf, finger);
+
+	if (this->input->users)
+		input_report_key(this->input, BTN_TOUCH, num_fingers > 0);
 end:
 	kfree(buf);
 	return rc;
@@ -7322,6 +7327,8 @@ static int clearpad_input_init(struct clearpad_t *this)
 
 	set_bit(ABS_MT_TRACKING_ID, this->input->absbit);
 	set_bit(ABS_MT_TOOL_TYPE, this->input->absbit);
+	set_bit(INPUT_PROP_DIRECT, this->input->propbit);
+	input_set_capability(this->input, EV_KEY, BTN_TOUCH);
 
 	LOGI(this, "touch area [%d, %d, %d, %d]\n",
 	     this->extents.x_min, this->extents.y_min,
