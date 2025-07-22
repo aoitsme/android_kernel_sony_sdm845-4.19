@@ -67,6 +67,7 @@
 #include <net/inet_hashtables.h>
 #include <net/inet6_hashtables.h>
 #include <net/ip_fib.h>
+#include <net/nexthop.h>
 #include <net/flow.h>
 #include <net/arp.h>
 #include <net/ipv6.h>
@@ -1607,7 +1608,7 @@ int sk_reuseport_attach_bpf(u32 ufd, struct sock *sk)
 		return -EPERM;
 
 	prog = bpf_prog_get_type(ufd, BPF_PROG_TYPE_SOCKET_FILTER);
-	if (IS_ERR(prog) && PTR_ERR(prog) == -EINVAL)
+	if (PTR_ERR(prog) == -EINVAL)
 		prog = bpf_prog_get_type(ufd, BPF_PROG_TYPE_SK_REUSEPORT);
 	if (IS_ERR(prog))
 		return PTR_ERR(prog);
@@ -5408,7 +5409,7 @@ static int bpf_ipv4_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 	if (res.type != RTN_UNICAST)
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-	if (res.fi->fib_nhs > 1)
+	if (fib_info_num_path(res.fi) > 1)
 		fib_select_path(net, &res, &fl4, NULL);
 
 	if (check_mtu) {
@@ -5510,27 +5511,25 @@ static int bpf_ipv6_fib_lookup(struct net *net, struct bpf_fib_lookup *params,
 		     res.f6i == net->ipv6.fib6_null_entry))
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
 
-	if (unlikely(res.f6i->fib6_flags & RTF_REJECT)) {
-		switch (res.f6i->fib6_type) {
-		case RTN_BLACKHOLE:
-			return BPF_FIB_LKUP_RET_BLACKHOLE;
-		case RTN_UNREACHABLE:
-			return BPF_FIB_LKUP_RET_UNREACHABLE;
-		case RTN_PROHIBIT:
-			return BPF_FIB_LKUP_RET_PROHIBIT;
-		default:
-			return BPF_FIB_LKUP_RET_NOT_FWDED;
-		}
-	}
-
-	if (res.f6i->fib6_type != RTN_UNICAST)
+	switch (res.fib6_type) {
+	/* only unicast is forwarded */
+	case RTN_UNICAST:
+		break;
+	case RTN_BLACKHOLE:
+		return BPF_FIB_LKUP_RET_BLACKHOLE;
+	case RTN_UNREACHABLE:
+		return BPF_FIB_LKUP_RET_UNREACHABLE;
+	case RTN_PROHIBIT:
+		return BPF_FIB_LKUP_RET_PROHIBIT;
+	default:
 		return BPF_FIB_LKUP_RET_NOT_FWDED;
+	}
 
 	ipv6_stub->fib6_select_path(net, &res, &fl6, fl6.flowi6_oif,
 				    fl6.flowi6_oif != 0, NULL, strict);
 
 	if (check_mtu) {
-		mtu = ipv6_stub->ip6_mtu_from_fib6(res.f6i, dst, src);
+		mtu = ipv6_stub->ip6_mtu_from_fib6(&res, dst, src);
 		if (params->tot_len > mtu)
 			return BPF_FIB_LKUP_RET_FRAG_NEEDED;
 	}
@@ -7599,7 +7598,7 @@ static bool bpf_skb_is_valid_access(int off, int size, enum bpf_access_type type
 		if (size != sizeof(__u64))
 			return false;
 		break;
-	case offsetof(struct __sk_buff, sk):
+	case bpf_ctx_range_ptr(struct __sk_buff, sk):
 		if (type == BPF_WRITE || size != sizeof(__u64))
 			return false;
 		info->reg_type = PTR_TO_SOCK_COMMON_OR_NULL;
@@ -8116,7 +8115,7 @@ static bool sock_addr_is_valid_access(int off, int size,
 				return false;
 		}
 		break;
-	case offsetof(struct bpf_sock_addr, sk):
+	case bpf_ctx_range_ptr(struct bpf_sock_addr, sk):
 		if (type != BPF_READ)
 			return false;
 		if (size != sizeof(__u64))
@@ -8170,17 +8169,17 @@ static bool sock_ops_is_valid_access(int off, int size,
 			if (size != sizeof(__u64))
 				return false;
 			break;
-		case offsetof(struct bpf_sock_ops, sk):
+		case bpf_ctx_range_ptr(struct bpf_sock_ops, sk):
 			if (size != sizeof(__u64))
 				return false;
 			info->reg_type = PTR_TO_SOCKET_OR_NULL;
 			break;
-		case offsetof(struct bpf_sock_ops, skb_data):
+		case bpf_ctx_range_ptr(struct bpf_sock_ops, skb_data):
 			if (size != sizeof(__u64))
 				return false;
 			info->reg_type = PTR_TO_PACKET;
 			break;
-		case offsetof(struct bpf_sock_ops, skb_data_end):
+		case bpf_ctx_range_ptr(struct bpf_sock_ops, skb_data_end):
 			if (size != sizeof(__u64))
 				return false;
 			info->reg_type = PTR_TO_PACKET_END;
@@ -8254,17 +8253,17 @@ static bool sk_msg_is_valid_access(int off, int size,
 		return false;
 
 	switch (off) {
-	case offsetof(struct sk_msg_md, data):
+	case bpf_ctx_range_ptr(struct sk_msg_md, data):
 		info->reg_type = PTR_TO_PACKET;
 		if (size != sizeof(__u64))
 			return false;
 		break;
-	case offsetof(struct sk_msg_md, data_end):
+	case bpf_ctx_range_ptr(struct sk_msg_md, data_end):
 		info->reg_type = PTR_TO_PACKET_END;
 		if (size != sizeof(__u64))
 			return false;
 		break;
-	case offsetof(struct sk_msg_md, sk):
+	case bpf_ctx_range_ptr(struct sk_msg_md, sk):
 		if (size != sizeof(__u64))
 			return false;
 		info->reg_type = PTR_TO_SOCKET;
@@ -10289,7 +10288,7 @@ static bool sk_lookup_is_valid_access(int off, int size,
 		return false;
 
 	switch (off) {
-	case offsetof(struct bpf_sk_lookup, sk):
+	case bpf_ctx_range_ptr(struct bpf_sk_lookup, sk):
 		info->reg_type = PTR_TO_SOCKET_OR_NULL;
 		return size == sizeof(__u64);
 
