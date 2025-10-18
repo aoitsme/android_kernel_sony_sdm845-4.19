@@ -374,12 +374,17 @@ static inline void smp_prepare_cpus(unsigned int maxcpus) { }
  */
 static void __init setup_command_line(char *command_line)
 {
-	saved_command_line =
-		memblock_virt_alloc(strlen(boot_command_line) + 1, 0);
-	initcall_command_line =
-		memblock_virt_alloc(strlen(boot_command_line) + 1, 0);
+	const char *force_normal = " androidboot.force_normal_boot=1";
+	bool normal_boot = strstr(boot_command_line, "skip_initramfs") != NULL;
+	size_t len = strlen(boot_command_line) + 1 +
+		     (normal_boot ? strlen(force_normal) : 0);
+
+	saved_command_line = memblock_virt_alloc(len, 0);
+	initcall_command_line = memblock_virt_alloc(len, 0);
 	static_command_line = memblock_virt_alloc(strlen(command_line) + 1, 0);
 	strcpy(saved_command_line, boot_command_line);
+	if (normal_boot)
+		strlcat(saved_command_line, force_normal, len);
 	strcpy(static_command_line, command_line);
 }
 
