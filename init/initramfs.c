@@ -604,9 +604,11 @@ static int __initdata do_skip_initramfs;
 
 static int __init skip_initramfs_param(char *str)
 {
-	if (*str)
-		return 0;
-	do_skip_initramfs = 1;
+	/*
+	 * Keep the ramdisk even if the bootloader asks to skip it.
+	 * On A/B devices with recovery-as-boot or Android 10+ two-stage init,
+	 * the ramdisk contains the essential first-stage init and recovery userspace.
+	 */
 	return 1;
 }
 __setup("skip_initramfs", skip_initramfs_param);
