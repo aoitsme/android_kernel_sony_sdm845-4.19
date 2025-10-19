@@ -15,7 +15,7 @@
 	};
 
 	ramoops: ramoops@ffc00000 {
-		compatible = "removed-dma-pool", "ramoops";
+		compatible = "ramoops";
 		no-map;
 		reg = <0 0xffc00000 0 0x00100000>;
 		record-size = <0x10000>;
@@ -2994,6 +2994,28 @@
 	android {
 		vbmeta {
 			parts = "vbmeta,boot,system,vendor,dtbo,rdimage";
+		};
+
+		fstab {
+			compatible = "android,fstab";
+
+			system {
+				compatible = "android,system";
+				dev = "/dev/block/platform/soc/1d84000.ufshc/by-name/system";
+				type = "ext4";
+				mnt_flags = "ro,barrier=1,discard";
+				fsmgr_flags = "wait,slotselect,avb";
+				status = "ok";
+			};
+
+			vendor {
+				compatible = "android,vendor";
+				dev = "/dev/block/platform/soc/1d84000.ufshc/by-name/vendor";
+				type = "ext4";
+				mnt_flags = "ro,barrier=1,discard";
+				fsmgr_flags = "wait,slotselect,avb";
+				status = "ok";
+			};
 		};
 	};
 };
