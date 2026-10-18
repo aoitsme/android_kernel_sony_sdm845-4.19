@@ -5,7 +5,12 @@
 #ifndef _UAPI_LINUX_MSM_ION_H
 #define _UAPI_LINUX_MSM_ION_H
 
+#include <linux/ioctl.h>
 #include <linux/types.h>
+
+#ifndef __KERNEL__
+#include <stddef.h>
+#endif
 
 #define ION_BIT(nr) (1U << (nr))
 
@@ -100,6 +105,7 @@ enum ion_heap_ids {
 
 #define ION_IOC_MSM_MAGIC 'M'
 
+#ifdef __KERNEL__
 struct ion_prefetch_regions {
 	__u64 sizes;
 	__u32 vmid;
@@ -112,6 +118,26 @@ struct ion_prefetch_data {
 	__u32 heap_id;
 	__u32 nr_regions;
 };
+#else
+struct ion_prefetch_regions {
+	union {
+		size_t *sizes;
+		__u64 sizes_u64;
+	};
+	__u32 vmid;
+	__u32 nr_sizes;
+};
+
+struct ion_prefetch_data {
+	__u64 len;
+	union {
+		struct ion_prefetch_regions *regions;
+		__u64 regions_u64;
+	};
+	__u32 heap_id;
+	__u32 nr_regions;
+};
+#endif
 
 #define ION_IOC_PREFETCH		_IOWR(ION_IOC_MSM_MAGIC, 3, \
 						struct ion_prefetch_data)
@@ -187,6 +213,12 @@ struct ion_flush_data {
 #define ION_IOC_IMPORT		_IOWR(ION_IOC_MAGIC, 5, struct ion_fd_data)
 #define ION_IOC_SYNC		_IOWR(ION_IOC_MAGIC, 7, struct ion_fd_data)
 #define ION_IOC_CUSTOM		_IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
+#define ION_IOC_CLEAN_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 0, \
+						struct ion_flush_data)
+#define ION_IOC_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 1, \
+						struct ion_flush_data)
+#define ION_IOC_CLEAN_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 2, \
+						struct ion_flush_data)
 
 #endif /* !__KERNEL__ */
 
