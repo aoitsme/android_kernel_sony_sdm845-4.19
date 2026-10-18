@@ -6,6 +6,9 @@
 #define _UAPI_LINUX_MSM_ION_H
 
 #include <linux/types.h>
+#ifndef __KERNEL__
+#include <stddef.h>
+#endif
 
 #define ION_BIT(nr) (1U << (nr))
 
@@ -118,5 +121,56 @@ struct ion_prefetch_data {
 
 #define ION_IOC_DRAIN			_IOWR(ION_IOC_MSM_MAGIC, 4, \
 						struct ion_prefetch_data)
+
+/*
+ * Legacy definitions and ioctl structures for backwards compatibility
+ * with hardware/qcom-caf media and display HALs.
+ */
+#ifndef ION_SECURE
+#define ION_SECURE			ION_FLAG_SECURE
+#endif
+
+#ifndef ION_IOMMU_HEAP_ID
+#define ION_IOMMU_HEAP_ID		ION_SYSTEM_HEAP_ID
+#endif
+
+#ifndef ION_HEAP_TYPE_IOMMU
+#define ION_HEAP_TYPE_IOMMU		ION_HEAP_TYPE_SYSTEM
+#endif
+
+typedef int ion_user_handle_t;
+
+struct ion_allocation_data {
+	size_t len;
+	size_t align;
+	unsigned int heap_id_mask;
+	unsigned int flags;
+	ion_user_handle_t handle;
+};
+
+struct ion_fd_data {
+	ion_user_handle_t handle;
+	int fd;
+};
+
+struct ion_handle_data {
+	ion_user_handle_t handle;
+};
+
+struct ion_custom_data {
+	unsigned int cmd;
+	unsigned long arg;
+};
+
+#define ION_IOC_MAGIC		'I'
+#define ION_IOC_ALLOC		_IOWR(ION_IOC_MAGIC, 0, \
+				      struct ion_allocation_data)
+#define ION_IOC_FREE		_IOWR(ION_IOC_MAGIC, 1, \
+				      struct ion_handle_data)
+#define ION_IOC_MAP		_IOWR(ION_IOC_MAGIC, 2, struct ion_fd_data)
+#define ION_IOC_SHARE		_IOWR(ION_IOC_MAGIC, 4, struct ion_fd_data)
+#define ION_IOC_IMPORT		_IOWR(ION_IOC_MAGIC, 5, struct ion_fd_data)
+#define ION_IOC_SYNC		_IOWR(ION_IOC_MAGIC, 7, struct ion_fd_data)
+#define ION_IOC_CUSTOM		_IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
 
 #endif /* _UAPI_LINUX_MSM_ION_H */

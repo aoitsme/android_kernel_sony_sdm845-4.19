@@ -860,6 +860,21 @@ invalid_input:
 	return stride;
 }
 
+#ifndef VENUS_EXTRADATA_SIZE
+#define VENUS_EXTRADATA_SIZE VENUS_EXTRADATA_SIZE
+static inline unsigned int VENUS_EXTRADATA_SIZE(int width, int height)
+{
+	(void)height;
+	(void)width;
+
+	/*
+	 * In the future, calculate the size based on the w/h but just
+	 * hardcode it for now since 16K satisfies all current usecases.
+	 */
+	return 16 * 1024;
+}
+#endif
+
 /*
  * Function arguments:
  * @color_fmt
