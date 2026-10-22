@@ -446,7 +446,7 @@ void kernfs_put_active(struct kernfs_node *kn)
 		return;
 
 	if (kernfs_lockdep(kn))
-		rwsem_release(&kn->dep_map, 1, _RET_IP_);
+		rwsem_release(&kn->dep_map, _RET_IP_);
 	v = atomic_dec_return(&kn->active);
 	if (likely(v != KN_DEACTIVATED_BIAS))
 		return;
@@ -484,7 +484,7 @@ static void kernfs_drain(struct kernfs_node *kn)
 
 	if (kernfs_lockdep(kn)) {
 		lock_acquired(&kn->dep_map, _RET_IP_);
-		rwsem_release(&kn->dep_map, 1, _RET_IP_);
+		rwsem_release(&kn->dep_map, _RET_IP_);
 	}
 
 	kernfs_drain_open_files(kn);
@@ -540,9 +540,6 @@ void kernfs_put(struct kernfs_node *kn)
 	kfree_const(kn->name);
 
 	if (kn->iattr) {
-		if (kn->iattr->ia_secdata)
-			security_release_secctx(kn->iattr->ia_secdata,
-						kn->iattr->ia_secdata_len);
 		simple_xattrs_free(&kn->iattr->xattrs);
 	}
 	kfree(kn->iattr);
@@ -801,9 +798,8 @@ int kernfs_add_one(struct kernfs_node *kn)
 	/* Update timestamps on the parent */
 	ps_iattr = parent->iattr;
 	if (ps_iattr) {
-		struct iattr *ps_iattrs = &ps_iattr->ia_iattr;
-		ktime_get_real_ts64(&ps_iattrs->ia_ctime);
-		ps_iattrs->ia_mtime = ps_iattrs->ia_ctime;
+		ktime_get_real_ts64(&ps_iattr->ia_ctime);
+		ps_iattr->ia_mtime = ps_iattr->ia_ctime;
 	}
 
 	mutex_unlock(&kernfs_mutex);
@@ -1334,9 +1330,8 @@ static void __kernfs_remove(struct kernfs_node *kn)
 
 			/* update timestamps on the parent */
 			if (ps_iattr) {
-				ktime_get_real_ts64(&ps_iattr->ia_iattr.ia_ctime);
-				ps_iattr->ia_iattr.ia_mtime =
-					ps_iattr->ia_iattr.ia_ctime;
+				ktime_get_real_ts64(&ps_iattr->ia_ctime);
+				ps_iattr->ia_mtime = ps_iattr->ia_ctime;
 			}
 
 			kernfs_put(pos);
