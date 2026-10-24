@@ -1247,6 +1247,15 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
+
+	/* Fake uname to 5.10 for bpfloader / netbpfload / netd on modern Android */
+	if (current_uid().val == 0 &&
+	    (!strncmp(current->comm, "bpfloader", 9) ||
+	     !strncmp(current->comm, "netbpfload", 10) ||
+	     !strncmp(current->comm, "netd", 4))) {
+		strlcpy(tmp.release, "5.10.239", sizeof(tmp.release));
+	}
+
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
