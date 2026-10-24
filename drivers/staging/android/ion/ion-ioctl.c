@@ -23,6 +23,7 @@ union ion_ioctl_arg {
 	struct ion_fd_data fd;
 	struct ion_old_allocation_data old_allocation;
 	struct ion_handle_data handle;
+	struct ion_custom_data custom;
 #endif
 };
 
@@ -161,6 +162,24 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case ION_IOC_IMPORT:
 		data.fd.handle = data.fd.fd;
+		break;
+	case ION_IOC_CUSTOM:
+		switch (data.custom.cmd) {
+		case ION_IOC_CLEAN_CACHES:
+		case ION_IOC_INV_CACHES:
+		case ION_IOC_CLEAN_INV_CACHES:
+			ret = 0;
+			break;
+		default:
+			pr_warn_ratelimited("[ion] unhandled custom cmd 0x%x\n", data.custom.cmd);
+			ret = 0;
+			break;
+		}
+		break;
+	case ION_IOC_CLEAN_CACHES:
+	case ION_IOC_INV_CACHES:
+	case ION_IOC_CLEAN_INV_CACHES:
+		ret = 0;
 		break;
 #endif
 	default:

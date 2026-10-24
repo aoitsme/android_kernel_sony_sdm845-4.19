@@ -96,6 +96,22 @@ struct ion_handle_data {
  */
 #define ION_IOC_IMPORT		_IOWR(ION_IOC_MAGIC, 5, struct ion_fd_data)
 
+/**
+ * struct ion_custom_data - metadata passed to/from userspace for custom ioctl
+ * @cmd:	command to execute
+ * @arg:	pointer to custom arguments
+ */
+struct ion_custom_data {
+	unsigned int cmd;
+	unsigned long arg;
+};
+
+#define ION_IOC_CUSTOM		_IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
+#define ION_IOC_MSM_MAGIC	'M'
+#define ION_IOC_CLEAN_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 0, unsigned long)
+#define ION_IOC_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 1, unsigned long)
+#define ION_IOC_CLEAN_INV_CACHES _IOWR(ION_IOC_MSM_MAGIC, 2, unsigned long)
+
 #endif /* CONFIG_ION_LEGACY */
 
 #endif /* _ION_LEGACY_H */

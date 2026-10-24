@@ -35,10 +35,17 @@ struct compat_ion_handle_data {
 	compat_int_t handle;
 };
 
+struct compat_ion_custom_data {
+	compat_uint_t cmd;
+	compat_ulong_t arg;
+};
+
 #define COMPAT_ION_IOC_ALLOC	_IOWR(ION_IOC_MAGIC, 0, \
 				      struct compat_ion_old_allocation_data)
 #define COMPAT_ION_IOC_FREE	_IOWR(ION_IOC_MAGIC, 1, \
 				      struct compat_ion_handle_data)
+#define COMPAT_ION_IOC_CUSTOM	_IOWR(ION_IOC_MAGIC, 6, \
+				      struct compat_ion_custom_data)
 
 static int compat_get_ion_allocation_data(
 			struct compat_ion_old_allocation_data __user *data32,
@@ -144,6 +151,28 @@ long compat_ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return filp->f_op->unlocked_ioctl(filp, ION_IOC_FREE,
 							(unsigned long)data);
 	}
+	case COMPAT_ION_IOC_CUSTOM:
+	{
+		struct compat_ion_custom_data __user *data32;
+		compat_uint_t cmd32;
+
+		data32 = compat_ptr(arg);
+		if (get_user(cmd32, &data32->cmd))
+			return -EFAULT;
+
+		switch (cmd32) {
+		case ION_IOC_CLEAN_CACHES:
+		case ION_IOC_INV_CACHES:
+		case ION_IOC_CLEAN_INV_CACHES:
+			return 0;
+		default:
+			return 0;
+		}
+	}
+	case ION_IOC_CLEAN_CACHES:
+	case ION_IOC_INV_CACHES:
+	case ION_IOC_CLEAN_INV_CACHES:
+		return 0;
 	case ION_IOC_SHARE:
 	case ION_IOC_MAP:
 	case ION_IOC_IMPORT:
