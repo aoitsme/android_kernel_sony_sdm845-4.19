@@ -394,6 +394,9 @@ static void _sde_encoder_phys_cmd_setup_irq_hw_idx(
 
 }
 
+static void sde_encoder_phys_cmd_enable_helper(
+		struct sde_encoder_phys *phys_enc);
+
 static void sde_encoder_phys_cmd_cont_splash_mode_set(
 		struct sde_encoder_phys *phys_enc,
 		struct drm_display_mode *adj_mode)
@@ -432,6 +435,7 @@ static void sde_encoder_phys_cmd_cont_splash_mode_set(
 		}
 	}
 
+	sde_encoder_phys_cmd_enable_helper(phys_enc);
 	_sde_encoder_phys_cmd_setup_irq_hw_idx(phys_enc);
 }
 
