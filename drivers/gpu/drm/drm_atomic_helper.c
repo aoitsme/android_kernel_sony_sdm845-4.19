@@ -630,10 +630,31 @@ drm_atomic_helper_check_modeset(struct drm_device *dev,
 		}
 
 		if (new_crtc_state->enable != has_connectors) {
-			DRM_DEBUG_ATOMIC("[CRTC:%d:%s] enabled/connectors mismatch\n",
-					 crtc->base.id, crtc->name);
+			pr_warn_ratelimited("[drm] [CRTC:%d:%s] enabled/connectors mismatch (enable=%d, has_conn=%d, conn_mask=0x%x)\n",
+					 crtc->base.id, crtc->name, new_crtc_state->enable, has_connectors, new_crtc_state->connector_mask);
 
-			return -EINVAL;
+			/*
+			 * Fallback for continuous splash handover: if CRTC is enabled
+			 * but connector_mask is 0, find the connector assigned to this CRTC.
+			 */
+			if (new_crtc_state->enable && !has_connectors) {
+				struct drm_connector *c;
+				struct drm_connector_list_iter c_iter;
+
+				drm_connector_list_iter_begin(dev, &c_iter);
+				drm_for_each_connector_iter(c, &c_iter) {
+					if (c->state && (c->state->crtc == crtc || (!c->state->crtc && c->encoder && c->encoder->crtc == crtc))) {
+						new_crtc_state->connector_mask |= drm_connector_mask(c);
+						has_connectors = true;
+						pr_warn_ratelimited("[drm] [CRTC:%d:%s] restored connector %d (%s) to mask\n",
+								    crtc->base.id, crtc->name, c->base.id, c->name);
+					}
+				}
+				drm_connector_list_iter_end(&c_iter);
+			}
+
+			if (new_crtc_state->enable != has_connectors)
+				return -EINVAL;
 		}
 	}
 

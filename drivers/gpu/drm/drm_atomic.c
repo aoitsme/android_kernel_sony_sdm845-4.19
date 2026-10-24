@@ -2118,8 +2118,9 @@ int drm_atomic_check_only(struct drm_atomic_state *state)
 	if (!state->allow_modeset) {
 		for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
 			if (drm_atomic_crtc_needs_modeset(crtc_state)) {
-				DRM_DEBUG_ATOMIC("[CRTC:%d:%s] requires full modeset\n",
-						 crtc->base.id, crtc->name);
+				pr_warn_ratelimited("[drm] [CRTC:%d:%s] requires full modeset (mode=%d, active=%d, conn=%d) but allow_modeset=false\n",
+						 crtc->base.id, crtc->name,
+						 crtc_state->mode_changed, crtc_state->active_changed, crtc_state->connectors_changed);
 				return -EINVAL;
 			}
 		}
