@@ -2582,16 +2582,22 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	}
 
 	/* DSI FIFO UNDERFLOW error */
-	if (error & 0xF00000) {
-		if (cb_info.event_cb) {
+	if ((error & 0xF00000) &&
+	    (dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE)) {
+		u32 mask = 0;
+
+		if (dsi_ctrl->hw.ops.get_error_mask)
+			mask = dsi_ctrl->hw.ops.get_error_mask(&dsi_ctrl->hw);
+		/* no need to report FIFO underflow if already masked */
+		if (cb_info.event_cb && !(mask & 0xf00000)) {
 			cb_info.event_idx = DSI_FIFO_UNDERFLOW;
 			(void)cb_info.event_cb(cb_info.event_usr_ptr,
 						cb_info.event_idx,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
+			DSI_CTRL_ERR(dsi_ctrl, "dsi FIFO UNDERFLOW error: 0x%lx\n",
+					error);
 		}
-		DSI_CTRL_ERR(dsi_ctrl, "dsi FIFO UNDERFLOW error: 0x%lx\n",
-				error);
 	}
 
 	/* DSI PLL UNLOCK error */
