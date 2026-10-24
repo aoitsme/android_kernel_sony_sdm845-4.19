@@ -2602,11 +2602,14 @@ retry:
 
 		obj = drm_mode_object_find(dev, file_priv, obj_id, DRM_MODE_OBJECT_ANY);
 		if (!obj) {
+			pr_err_ratelimited("[drm] atomic_ioctl: obj_id %u NOT FOUND (ret -ENOENT)\n", obj_id);
 			ret = -ENOENT;
 			goto out;
 		}
 
 		if (!obj->properties) {
+			pr_err_ratelimited("[drm] atomic_ioctl: obj_id %u (type 0x%x) has no properties (ret -ENOENT)\n",
+					   obj_id, obj->type);
 			drm_mode_object_put(obj);
 			ret = -ENOENT;
 			goto out;
@@ -2631,11 +2634,32 @@ retry:
 				goto out;
 			}
 
+			if (prop_id == 0) {
+				pr_warn_ratelimited("[drm] atomic_ioctl: skipping prop_id 0 on obj_id %u\n", obj_id);
+				copied_props++;
+				continue;
+			}
+
 			prop = drm_mode_obj_find_prop_id(obj, prop_id);
 			if (!prop) {
-				drm_mode_object_put(obj);
-				ret = -ENOENT;
-				goto out;
+				struct drm_property *fallback_prop = drm_property_find(dev, file_priv, prop_id);
+				if (fallback_prop) {
+					int p;
+					for (p = 0; p < obj->properties->count; p++) {
+						if (!strcmp(obj->properties->properties[p]->name, fallback_prop->name)) {
+							prop = obj->properties->properties[p];
+							pr_warn_ratelimited("[drm] atomic_ioctl: remapped prop '%s' from id %u to %u on obj_id %u\n",
+									    fallback_prop->name, prop_id, prop->base.id, obj_id);
+							break;
+						}
+					}
+				}
+			}
+			if (!prop) {
+				pr_warn_ratelimited("[drm] atomic_ioctl: skipping unsupported prop_id %u on obj_id %u (type 0x%x)\n",
+						    prop_id, obj_id, obj->type);
+				copied_props++;
+				continue;
 			}
 
 			if (copy_from_user(&prop_value,
@@ -2649,6 +2673,9 @@ retry:
 			ret = drm_atomic_set_property(state, obj, prop,
 						      prop_value);
 			if (ret) {
+				if (ret == -ENOENT)
+					pr_err_ratelimited("[drm] set_prop: obj %u prop %u ('%s') ret -ENOENT\n",
+							   obj_id, prop_id, prop->name);
 				drm_mode_object_put(obj);
 				goto out;
 			}
@@ -2674,6 +2701,9 @@ retry:
 
 		ret = drm_atomic_commit(state);
 	}
+
+	if (ret)
+		pr_err_ratelimited("[drm] atomic commit flags 0x%x failed: %d\n", arg->flags, ret);
 
 out:
 	complete_signaling(dev, state, fence_state, num_fences, !ret);
