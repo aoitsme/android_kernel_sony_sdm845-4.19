@@ -6166,7 +6166,7 @@ int sde_encoder_update_caps_for_cont_splash(struct drm_encoder *encoder,
 	if (sde_enc->cur_master) {
 		_sde_encoder_update_vsync_source(sde_enc,
 				&sde_enc->disp_info, false);
-		sde_encoder_control_te(encoder, true);
+		sde_encoder_control_te(encoder, false);
 	}
 
 	return ret;
