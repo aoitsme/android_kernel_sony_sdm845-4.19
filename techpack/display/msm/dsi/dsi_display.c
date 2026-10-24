@@ -6953,6 +6953,7 @@ static void dsi_display_handle_fifo_underflow(struct work_struct *work)
 
 	display = container_of(work, struct dsi_display, fifo_underflow_work);
 	if (!display || !display->panel ||
+	    (display->panel->panel_mode != DSI_OP_VIDEO_MODE) ||
 	    atomic_read(&display->panel->esd_recovery_pending)) {
 		DSI_DEBUG("Invalid recovery use case\n");
 		return;
