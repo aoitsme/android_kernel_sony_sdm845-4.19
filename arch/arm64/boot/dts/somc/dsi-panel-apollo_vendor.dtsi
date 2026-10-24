@@ -87,6 +87,7 @@
 		somc,qpnp-ibb-full-pull-down;
 
 		somc,fps-mode-enable;
+		somc,fps-mode-panel-type = "full_incell_type";
 		somc,fps-mode-panel-mode = "dynamic_mode";
 
 		qcom,mdss-dsi-display-timings {
@@ -232,6 +233,7 @@
 		somc,qpnp-ibb-full-pull-down;
 
 		somc,fps-mode-enable;
+		somc,fps-mode-panel-type = "full_incell_type";
 		somc,fps-mode-panel-mode = "dynamic_mode";
 
 		qcom,mdss-dsi-display-timings {
