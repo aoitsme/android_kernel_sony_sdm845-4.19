@@ -2638,6 +2638,10 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 		mutex_unlock(&dev->mode_config.mutex);
 
 		crtc->state->encoder_mask = (1 << drm_encoder_index(encoder));
+		crtc->state->connector_mask = (1 << drm_connector_index(connector));
+		connector->encoder = encoder;
+		connector->state->crtc = crtc;
+		connector->state->best_encoder = encoder;
 
 		/* currently consider modes[0] as the preferred mode */
 		drm_mode = list_first_entry(&connector->modes,

@@ -6095,6 +6095,8 @@ int sde_encoder_update_caps_for_cont_splash(struct drm_encoder *encoder,
 	}
 
 	if (sde_conn->encoder) {
+		conn->encoder = sde_conn->encoder;
+		conn->state->crtc = encoder->crtc;
 		conn->state->best_encoder = sde_conn->encoder;
 		SDE_DEBUG_ENC(sde_enc,
 			"configured cstate->best_encoder to ID = %d\n",
