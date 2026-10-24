@@ -785,7 +785,7 @@ static const struct adreno_a6xx_core adreno_gpu_core_a630v2 = {
 		DEFINE_ADRENO_REV(ADRENO_REV_A630, 6, 3, 0, ANY_ID),
 		.features = ADRENO_64BIT | ADRENO_RPMH | ADRENO_IFPC |
 			ADRENO_GPMU | ADRENO_CONTENT_PROTECTION |
-			ADRENO_IOCOHERENT | ADRENO_PREEMPTION,
+			ADRENO_IOCOHERENT,
 		.gpudev = &adreno_a6xx_gpudev,
 		.gmem_size = SZ_1M,
 		.busy_mask = 0xfffffffe,
