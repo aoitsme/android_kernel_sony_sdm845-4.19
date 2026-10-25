@@ -339,7 +339,7 @@
  	};
 
 	qcom,wdt@17980000 {
-		qcom,bark-time = <12000>;
+		qcom,bark-time = <60000>;
 	};
 
 	sound-tavil {

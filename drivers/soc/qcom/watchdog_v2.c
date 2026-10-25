@@ -762,7 +762,12 @@ static irqreturn_t wdog_bark_handler(int irq, void *dev_id)
 	if (wdog_dd->do_ipi_ping)
 		dump_cpu_alive_mask(wdog_dd);
 
-	msm_trigger_wdog_bite();
+	/* Pet watchdog on bark to prevent sudden reboot during bringup */
+	__raw_writel(1, wdog_dd->base + WDT0_RST);
+	mb();
+	wdog_dd->last_pet = sched_clock();
+	dev_warn(wdog_dd->dev, "Watchdog bark pet to prevent bringup reset\n");
+
 	return IRQ_HANDLED;
 }
 
