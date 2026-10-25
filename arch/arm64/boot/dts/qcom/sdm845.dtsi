@@ -4196,6 +4196,7 @@
 	clocks = <&clock_gfx GPU_CC_GX_GFX3D_CLK_SRC>;
 	qcom,force-enable-root-clk;
 	parent-supply = <&pm8005_s1_level>;
+	regulator-always-on;
 	status = "ok";
 };
 
