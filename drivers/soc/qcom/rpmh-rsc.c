@@ -745,9 +745,9 @@ void rpmh_rsc_debug(struct rsc_drv *drv, struct completion *compl)
 	 * The TCS(s) are busy waiting, we have no way to recover from this.
 	 * If this debug function is called, we assume it's because timeout
 	 * has happened.
-	 * Crash and report.
+	 * Warn and report instead of crashing during bringup.
 	 */
-	BUG_ON(busy);
+	WARN_ON(busy);
 }
 
 static int rpmh_probe_tcs_config(struct platform_device *pdev,

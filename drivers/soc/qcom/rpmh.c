@@ -22,7 +22,7 @@
 
 #include "rpmh-internal.h"
 
-#define RPMH_TIMEOUT_MS			msecs_to_jiffies(10000)
+#define RPMH_TIMEOUT_MS			msecs_to_jiffies(30000)
 
 #define DEFINE_RPMH_MSG_ONSTACK(dev, s, q, name)	\
 	struct rpmh_request name = {			\
