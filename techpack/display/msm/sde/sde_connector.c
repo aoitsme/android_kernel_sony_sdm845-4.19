@@ -2176,6 +2176,7 @@ int sde_connector_esd_status(struct drm_connector *conn)
 {
 	struct sde_connector *sde_conn = NULL;
 	struct dsi_display *display;
+	struct msm_display_info info;
 	int ret = 0;
 
 	if (!conn)
@@ -2184,6 +2185,10 @@ int sde_connector_esd_status(struct drm_connector *conn)
 	sde_conn = to_sde_connector(conn);
 	if (!sde_conn || !sde_conn->ops.check_status)
 		return ret;
+
+	sde_connector_get_info(conn, &info);
+	if (!(info.capabilities & MSM_DISPLAY_ESD_ENABLED))
+		return 0;
 
 	display = sde_conn->display;
 
