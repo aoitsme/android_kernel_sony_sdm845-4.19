@@ -557,6 +557,205 @@ static int fpc1145_get_regulators(struct fpc1145_data *fpc1145)
 	return 0;
 }
 
+static ssize_t spi_prepare_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+	int rc = 0;
+	bool enable;
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "enable") || sysfs_streq(buf, "1"))
+		enable = true;
+	else if (sysfs_streq(buf, "disable") || sysfs_streq(buf, "0"))
+		enable = false;
+	else
+		return -EINVAL;
+
+	mutex_lock(&fpc1145->lock);
+	rc = device_prepare(fpc1145, enable);
+	mutex_unlock(&fpc1145->lock);
+
+	return rc ? rc : count;
+}
+static DEVICE_ATTR_WO(spi_prepare);
+
+static ssize_t device_prepare_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	return spi_prepare_store(dev, attr, buf, count);
+}
+static DEVICE_ATTR_WO(device_prepare);
+
+static ssize_t hw_reset_store(struct device *dev,
+			      struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+	int rc = 0;
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "reset") || sysfs_streq(buf, "1")) {
+		mutex_lock(&fpc1145->lock);
+		rc = hw_reset(fpc1145);
+		mutex_unlock(&fpc1145->lock);
+		return rc ? rc : count;
+	}
+
+	return -EINVAL;
+}
+static DEVICE_ATTR_WO(hw_reset);
+
+static ssize_t pm_wakeup_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+	int val = 0;
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	if (kstrtoint(buf, 10, &val) == 0 && val > 0)
+		pm_wakeup_event(dev, val);
+	else
+		pm_relax(dev);
+
+	return count;
+}
+static DEVICE_ATTR_WO(pm_wakeup);
+
+static ssize_t wake_lock_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	return pm_wakeup_store(dev, attr, buf, count);
+}
+static DEVICE_ATTR_WO(wake_lock);
+
+static ssize_t wakeup_enable_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "enable") || sysfs_streq(buf, "1"))
+		device_init_wakeup(dev, true);
+	else if (sysfs_streq(buf, "disable") || sysfs_streq(buf, "0"))
+		device_init_wakeup(dev, false);
+
+	return count;
+}
+static DEVICE_ATTR_WO(wakeup_enable);
+
+static ssize_t pinctl_set_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+	char state_name[64];
+	int rc;
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	strlcpy(state_name, buf, sizeof(state_name));
+	strim(state_name);
+
+	mutex_lock(&fpc1145->lock);
+	rc = select_pin_ctl(fpc1145, state_name);
+	mutex_unlock(&fpc1145->lock);
+
+	return rc ? rc : count;
+}
+static DEVICE_ATTR_WO(pinctl_set);
+
+static ssize_t regulator_enable_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+	char op;
+	char name[16];
+	bool enable;
+	int rc = 0;
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	if (sscanf(buf, "%15[^,],%c", name, &op) != 2)
+		return -EINVAL;
+
+	if (op == 'e' || op == '1')
+		enable = true;
+	else if (op == 'd' || op == '0')
+		enable = false;
+	else
+		return -EINVAL;
+
+	mutex_lock(&fpc1145->lock);
+	if (strcmp(name, "vcc_spi") == 0)
+		rc = vreg_setup(fpc1145, VCC_SPI, enable);
+#ifndef CONFIG_ARCH_SONY_LOIRE
+	else if (strcmp(name, "vdd_io") == 0)
+		rc = vreg_setup(fpc1145, VDD_IO, enable);
+	else if (strcmp(name, "vdd_ana") == 0)
+		rc = vreg_setup(fpc1145, VDD_ANA, enable);
+#endif
+	mutex_unlock(&fpc1145->lock);
+
+	return rc ? rc : count;
+}
+static DEVICE_ATTR_WO(regulator_enable);
+
+static ssize_t clk_enable_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	return count;
+}
+static DEVICE_ATTR_WO(clk_enable);
+
+static ssize_t irq_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+	int irq_val = 0;
+
+	if (fpc1145 && gpio_is_valid(fpc1145->irq_gpio))
+		irq_val = gpio_get_value(fpc1145->irq_gpio);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", irq_val);
+}
+static DEVICE_ATTR_RO(irq);
+
+static struct attribute *fpc1145_attributes[] = {
+	&dev_attr_spi_prepare.attr,
+	&dev_attr_device_prepare.attr,
+	&dev_attr_pm_wakeup.attr,
+	&dev_attr_wake_lock.attr,
+	&dev_attr_hw_reset.attr,
+	&dev_attr_wakeup_enable.attr,
+	&dev_attr_pinctl_set.attr,
+	&dev_attr_regulator_enable.attr,
+	&dev_attr_clk_enable.attr,
+	&dev_attr_irq.attr,
+	NULL
+};
+
+static const struct attribute_group fpc1145_attribute_group = {
+	.attrs = fpc1145_attributes,
+};
+
 static int fpc1145_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -682,6 +881,10 @@ static int fpc1145_probe(struct platform_device *pdev)
 		(void)device_prepare(fpc1145, true);
 	}
 
+	rc = sysfs_create_group(&dev->kobj, &fpc1145_attribute_group);
+	if (rc)
+		dev_err(dev, "could not create sysfs\n");
+
 	rc = misc_register(&fpc1145->misc);
 	if (!rc)
 		goto exit;
@@ -696,6 +899,7 @@ static int fpc1145_remove(struct platform_device *pdev)
 {
 	struct fpc1145_data *fpc1145 = platform_get_drvdata(pdev);
 
+	sysfs_remove_group(&pdev->dev.kobj, &fpc1145_attribute_group);
 	device_init_wakeup(fpc1145->dev, false);
 	mutex_destroy(&fpc1145->lock);
 #ifdef CONFIG_ARCH_SONY_LOIRE
