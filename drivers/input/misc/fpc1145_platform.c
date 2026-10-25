@@ -774,6 +774,7 @@ static int fpc1145_probe(struct platform_device *pdev)
 		.minor = MISC_DYNAMIC_MINOR,
 		.name = "fingerprint",
 		.fops = &fpc1145_device_fops,
+		.mode = 0660,
 	};
 
 	fpc1145->dev = dev;

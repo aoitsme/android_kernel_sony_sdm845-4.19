@@ -837,6 +837,9 @@ int dsi_display_check_status(struct drm_connector *connector, void *display,
 	if (atomic_read(&panel->esd_recovery_pending))
 		goto release_panel_lock;
 
+	if (!panel->esd_config.esd_enabled)
+		goto release_panel_lock;
+
 	status_mode = panel->esd_config.status_mode;
 
 	if (status_mode == ESD_MODE_SW_SIM_SUCCESS)
