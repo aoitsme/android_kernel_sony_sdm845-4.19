@@ -901,6 +901,8 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 	} else if (property == plane->alpha_property) {
 		state->alpha = val;
 	} else if (property == plane->rotation_property) {
+		if (!(val & DRM_MODE_ROTATE_MASK))
+			val |= DRM_MODE_ROTATE_0;
 		if (!is_power_of_2(val & DRM_MODE_ROTATE_MASK)) {
 			DRM_DEBUG_ATOMIC("[PLANE:%d:%s] bad rotation bitmask: 0x%llx\n",
 					 plane->base.id, plane->name, val);
@@ -2674,9 +2676,8 @@ retry:
 			ret = drm_atomic_set_property(state, obj, prop,
 						      prop_value);
 			if (ret) {
-				if (ret == -ENOENT)
-					pr_err_ratelimited("[drm] set_prop: obj %u prop %u ('%s') ret -ENOENT\n",
-							   obj_id, prop_id, prop->name);
+				pr_err_ratelimited("[drm] set_prop failed: obj %u (type 0x%x) prop %u ('%s') val 0x%llx ret %d\n",
+						   obj_id, obj->type, prop_id, prop->name, prop_value, ret);
 				drm_mode_object_put(obj);
 				goto out;
 			}
