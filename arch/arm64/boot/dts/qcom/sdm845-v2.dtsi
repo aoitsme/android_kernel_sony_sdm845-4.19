@@ -472,6 +472,7 @@
 	domain-addr = <&gpu_gx_domain_addr>;
 	sw-reset = <&gpu_gx_sw_reset>;
 	qcom,reset-aon-logic;
+	regulator-always-on;
 };
 
 /* GPU overrides */
