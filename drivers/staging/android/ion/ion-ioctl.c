@@ -168,17 +168,25 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		case ION_IOC_CLEAN_CACHES:
 		case ION_IOC_INV_CACHES:
 		case ION_IOC_CLEAN_INV_CACHES:
+		case ION_IOC_CLEAN_CACHES_OLD:
+		case ION_IOC_INV_CACHES_OLD:
+		case ION_IOC_CLEAN_INV_CACHES_OLD:
 			ret = 0;
 			break;
 		default:
-			pr_warn_ratelimited("[ion] unhandled custom cmd 0x%x\n", data.custom.cmd);
-			ret = 0;
+			if (_IOC_TYPE(data.custom.cmd) == ION_IOC_MSM_MAGIC)
+				ret = 0;
+			else
+				pr_warn_ratelimited("[ion] unhandled custom cmd 0x%x\n", data.custom.cmd);
 			break;
 		}
 		break;
 	case ION_IOC_CLEAN_CACHES:
 	case ION_IOC_INV_CACHES:
 	case ION_IOC_CLEAN_INV_CACHES:
+	case ION_IOC_CLEAN_CACHES_OLD:
+	case ION_IOC_INV_CACHES_OLD:
+	case ION_IOC_CLEAN_INV_CACHES_OLD:
 		ret = 0;
 		break;
 #endif

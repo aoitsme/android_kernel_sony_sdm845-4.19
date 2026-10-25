@@ -106,11 +106,22 @@ struct ion_custom_data {
 	unsigned long arg;
 };
 
+struct ion_flush_data {
+	ion_user_handle_t handle;
+	int fd;
+	void *vaddr;
+	unsigned int offset;
+	unsigned int length;
+};
+
 #define ION_IOC_CUSTOM		_IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
 #define ION_IOC_MSM_MAGIC	'M'
-#define ION_IOC_CLEAN_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 0, unsigned long)
-#define ION_IOC_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 1, unsigned long)
-#define ION_IOC_CLEAN_INV_CACHES _IOWR(ION_IOC_MSM_MAGIC, 2, unsigned long)
+#define ION_IOC_CLEAN_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 0, struct ion_flush_data)
+#define ION_IOC_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 1, struct ion_flush_data)
+#define ION_IOC_CLEAN_INV_CACHES _IOWR(ION_IOC_MSM_MAGIC, 2, struct ion_flush_data)
+#define ION_IOC_CLEAN_CACHES_OLD	_IOWR(ION_IOC_MSM_MAGIC, 0, unsigned long)
+#define ION_IOC_INV_CACHES_OLD		_IOWR(ION_IOC_MSM_MAGIC, 1, unsigned long)
+#define ION_IOC_CLEAN_INV_CACHES_OLD	_IOWR(ION_IOC_MSM_MAGIC, 2, unsigned long)
 
 #endif /* CONFIG_ION_LEGACY */
 
