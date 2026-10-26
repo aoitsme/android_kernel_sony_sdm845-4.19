@@ -263,6 +263,13 @@ static void dsi_bridge_disable(struct drm_bridge *bridge)
 		return;
 	}
 	display = c_bridge->display;
+
+	if (display && display->is_cont_splash_enabled) {
+		DSI_DEBUG("[%d] cont splash enabled, skipping bridge disable\n",
+			c_bridge->id);
+		return;
+	}
+
 	private_flags =
 		bridge->encoder->crtc->state->adjusted_mode.private_flags;
 
@@ -287,6 +294,12 @@ static void dsi_bridge_post_disable(struct drm_bridge *bridge)
 
 	if (!bridge) {
 		DSI_ERR("Invalid params\n");
+		return;
+	}
+
+	if (c_bridge->display && c_bridge->display->is_cont_splash_enabled) {
+		DSI_DEBUG("[%d] cont splash enabled, skipping bridge post_disable\n",
+			c_bridge->id);
 		return;
 	}
 

@@ -737,7 +737,7 @@ static int dsi_panel_wled_register(struct dsi_panel *panel,
 	struct backlight_device *bd;
 
 	bd = backlight_device_get_by_type(BACKLIGHT_RAW);
-	if (!bd) {
+	if (!bd || (dev_name(&bd->dev) && strncmp(dev_name(&bd->dev), "panel", 5) == 0)) {
 		DSI_ERR("[%s] fail raw backlight register\n", panel->name);
 		return -EPROBE_DEFER;
 	}
@@ -865,6 +865,10 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 #endif
 	switch (bl->type) {
 	case DSI_BACKLIGHT_WLED:
+		if (!bl->raw_bd)
+			return 0;
+		if (dev_name(&bl->raw_bd->dev) && strncmp(dev_name(&bl->raw_bd->dev), "panel", 5) == 0)
+			return 0;
 		rc = backlight_device_set_brightness(bl->raw_bd, bl_lvl);
 		break;
 	case DSI_BACKLIGHT_DCS:

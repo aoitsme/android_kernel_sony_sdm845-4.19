@@ -7732,6 +7732,16 @@ int dsi_display_enable(struct dsi_display *display)
 			return -EINVAL;
 		}
 
+		/*
+		 * Continuous splash cleanup powered off DSI link clocks.
+		 * Re-enable all clocks immediately so frame transmission can proceed.
+		 */
+		rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+				DSI_ALL_CLKS, DSI_CLK_ON);
+		if (rc)
+			DSI_ERR("[%s] failed to enable DSI clocks after splash cleanup, rc=%d\n",
+				display->name, rc);
+
 		display->panel->panel_initialized = true;
 		DSI_DEBUG("cont splash enabled, display enable not required\n");
 #ifdef CONFIG_DRM_SDE_SPECIFIC_PANEL
