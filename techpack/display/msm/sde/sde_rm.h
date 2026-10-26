@@ -285,13 +285,9 @@ int sde_rm_update_topology(struct drm_connector_state *conn_state,
 static inline bool sde_rm_topology_is_dual_ctl(struct sde_rm *rm,
 		enum sde_rm_topology_name topology)
 {
-	if ((!rm) || (topology <= SDE_RM_TOPOLOGY_NONE) ||
-			(topology >= SDE_RM_TOPOLOGY_MAX)) {
-		pr_err("invalid arguments: rm:%d topology:%d\n",
-				rm == NULL, topology);
-
+	if (!rm || topology <= SDE_RM_TOPOLOGY_NONE ||
+			topology >= SDE_RM_TOPOLOGY_MAX)
 		return false;
-	}
 
 	return rm->topology_tbl[topology].num_ctl == DUAL_CTL;
 }
