@@ -372,6 +372,9 @@ static struct thermal_cooling_device_ops bd_cdev_ops = {
 static void backlight_cdev_register(struct device *parent,
 				    struct backlight_device *bd)
 {
+	if (!parent || !parent->of_node)
+		return;
+
 	if (of_find_property(parent->of_node, "#cooling-cells", NULL)) {
 		bd->cdev = thermal_of_cooling_device_register(parent->of_node,
 				(char *)dev_name(&bd->dev), bd, &bd_cdev_ops);
