@@ -2542,7 +2542,8 @@ static int _sde_plane_validate_shared_crtc(struct sde_plane *psde,
 
 		if (splash_display && splash_display->cont_splash_enabled &&
 			splash_display->encoder &&
-			state->crtc != splash_display->encoder->crtc) {
+			state->crtc != splash_display->encoder->crtc &&
+			!(state->crtc->state && state->crtc->state->active)) {
 
 			for (j = 0; j < MAX_DATA_PATH_PER_DSIPLAY; j++) {
 

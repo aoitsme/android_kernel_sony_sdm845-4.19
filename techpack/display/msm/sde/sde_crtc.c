@@ -2303,6 +2303,27 @@ enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 	return INTF_MODE_NONE;
 }
 
+static inline bool _sde_crtc_encoder_matches(struct drm_crtc *crtc, struct drm_encoder *enc)
+{
+	if (!crtc || !enc)
+		return false;
+
+	if (enc->crtc == crtc)
+		return true;
+
+	if (crtc->state && (crtc->state->encoder_mask & (1 << drm_encoder_index(enc)))) {
+		enc->crtc = crtc;
+		return true;
+	}
+
+	if (drm_crtc_index(crtc) == 0 && enc->encoder_type == DRM_MODE_ENCODER_DSI) {
+		enc->crtc = crtc;
+		return true;
+	}
+
+	return false;
+}
+
 u32 sde_crtc_get_fps_mode(struct drm_crtc *crtc)
 {
 	struct drm_encoder *encoder;
@@ -2313,7 +2334,7 @@ u32 sde_crtc_get_fps_mode(struct drm_crtc *crtc)
 	}
 
 	drm_for_each_encoder(encoder, crtc->dev)
-		if ((encoder->crtc == crtc)
+		if (_sde_crtc_encoder_matches(crtc, encoder)
 				&& !sde_encoder_in_cont_splash(encoder))
 			return sde_encoder_get_fps(encoder);
 
@@ -3052,6 +3073,47 @@ static void _sde_crtc_setup_mixer_for_encoder(
 			SDE_DEBUG("setup mixer %d: ds %d\n",
 				i, mixer->hw_ds->idx - DS_0);
 	}
+
+	/* Fallback: if encoder has no dedicated RM rsvp, match any available LM/CTL */
+	if (sde_crtc->num_mixers == 0) {
+		sde_rm_init_hw_iter(&lm_iter, 0, SDE_HW_BLK_LM);
+		sde_rm_init_hw_iter(&ctl_iter, 0, SDE_HW_BLK_CTL);
+		sde_rm_init_hw_iter(&dspp_iter, 0, SDE_HW_BLK_DSPP);
+		sde_rm_init_hw_iter(&ds_iter, 0, SDE_HW_BLK_DS);
+
+		for (i = sde_crtc->num_mixers; i < ARRAY_SIZE(sde_crtc->mixers); i++) {
+			mixer = &sde_crtc->mixers[i];
+
+			if (!sde_rm_get_hw(rm, &lm_iter))
+				break;
+			mixer->hw_lm = (struct sde_hw_mixer *)lm_iter.hw;
+
+			if (!sde_rm_get_hw(rm, &ctl_iter)) {
+				mixer->hw_ctl = last_valid_ctl;
+			} else {
+				mixer->hw_ctl = (struct sde_hw_ctl *)ctl_iter.hw;
+				last_valid_ctl = mixer->hw_ctl;
+				sde_crtc->num_ctls++;
+			}
+
+			if (!mixer->hw_ctl)
+				break;
+
+			(void) sde_rm_get_hw(rm, &dspp_iter);
+			mixer->hw_dspp = (struct sde_hw_dspp *)dspp_iter.hw;
+
+			(void) sde_rm_get_hw(rm, &ds_iter);
+			mixer->hw_ds = (struct sde_hw_ds *)ds_iter.hw;
+
+			mixer->encoder = enc;
+			sde_crtc->num_mixers++;
+
+			SDE_DEBUG("setup fallback mixer %d: lm %d ctl %d\n",
+					i, mixer->hw_lm->idx - LM_0,
+					mixer->hw_ctl->idx - CTL_0);
+			break;
+		}
+	}
 }
 
 static void _sde_crtc_setup_mixers(struct drm_crtc *crtc)
@@ -3067,7 +3129,7 @@ static void _sde_crtc_setup_mixers(struct drm_crtc *crtc)
 	mutex_lock(&sde_crtc->crtc_lock);
 	/* Check for mixers on all encoders attached to this crtc */
 	list_for_each_entry(enc, &crtc->dev->mode_config.encoder_list, head) {
-		if (enc->crtc != crtc)
+		if (!_sde_crtc_encoder_matches(crtc, enc))
 			continue;
 
 		/* avoid overwriting mixers info from a copy encoder */
@@ -3174,6 +3236,13 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	sde_crtc = to_sde_crtc(crtc);
 	dev = crtc->dev;
 
+	if (!crtc->state->adjusted_mode.hdisplay) {
+		if (crtc->state->mode.hdisplay)
+			drm_mode_copy(&crtc->state->adjusted_mode, &crtc->state->mode);
+		else if (crtc->mode.hdisplay)
+			drm_mode_copy(&crtc->state->adjusted_mode, &crtc->mode);
+	}
+
 	if (!sde_crtc->num_mixers) {
 		_sde_crtc_setup_mixers(crtc);
 		_sde_crtc_setup_is_ppsplit(crtc->state);
@@ -3181,7 +3250,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	}
 
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
-		if (encoder->crtc != crtc)
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
 			continue;
 
 		/* encoder will trigger pending mask now */
@@ -3293,6 +3362,11 @@ static void sde_crtc_atomic_flush(struct drm_crtc *crtc,
 	 * it means we are trying to flush a CRTC whose state is disabled:
 	 * nothing else needs to be done.
 	 */
+	if (unlikely(!sde_crtc->num_mixers)) {
+		_sde_crtc_setup_mixers(crtc);
+		_sde_crtc_setup_is_ppsplit(crtc->state);
+		_sde_crtc_setup_lm_bounds(crtc, crtc->state);
+	}
 	if (unlikely(!sde_crtc->num_mixers))
 		return;
 
@@ -3536,7 +3610,7 @@ int sde_crtc_reset_hw(struct drm_crtc *crtc, struct drm_crtc_state *old_state,
 	/* attempt to poll for start of frame cycle before reset release */
 	list_for_each_entry(encoder,
 			&crtc->dev->mode_config.encoder_list, head) {
-		if (encoder->crtc != crtc)
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
 			continue;
 		if (sde_encoder_get_intf_mode(encoder) == INTF_MODE_VIDEO)
 			sde_encoder_poll_line_counts(encoder);
@@ -3552,7 +3626,7 @@ int sde_crtc_reset_hw(struct drm_crtc *crtc, struct drm_crtc_state *old_state,
 
 	list_for_each_entry(encoder,
 			&crtc->dev->mode_config.encoder_list, head) {
-		if (encoder->crtc != crtc)
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
 			continue;
 
 		if (sde_encoder_get_intf_mode(encoder) == INTF_MODE_VIDEO)
@@ -3598,6 +3672,11 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 	 * it means we are trying to start a CRTC whose state is disabled:
 	 * nothing else needs to be done.
 	 */
+	if (unlikely(!sde_crtc->num_mixers)) {
+		_sde_crtc_setup_mixers(crtc);
+		_sde_crtc_setup_is_ppsplit(crtc->state);
+		_sde_crtc_setup_lm_bounds(crtc, crtc->state);
+	}
 	if (unlikely(!sde_crtc->num_mixers))
 		return;
 
@@ -3606,7 +3685,7 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 	idle_pc_state = sde_crtc_get_property(cstate, CRTC_PROP_IDLE_PC_STATE);
 
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
-		if (encoder->crtc != crtc)
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
 			continue;
 
 		/*
@@ -3661,7 +3740,7 @@ void sde_crtc_commit_kickoff(struct drm_crtc *crtc,
 	}
 
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
-		if (encoder->crtc != crtc)
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
 			continue;
 
 		sde_encoder_kickoff(encoder, false);
@@ -4791,6 +4870,12 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 	}
 
 	mode = &state->adjusted_mode;
+	if (!mode->hdisplay) {
+		if (state->mode.hdisplay)
+			drm_mode_copy(&state->adjusted_mode, &state->mode);
+		else if (crtc->mode.hdisplay)
+			drm_mode_copy(&state->adjusted_mode, &crtc->mode);
+	}
 	SDE_DEBUG("%s: check", sde_crtc->name);
 
 	/* force a full mode set if active state changed */
@@ -4809,11 +4894,24 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(conn, &conn_iter)
-		if (conn->state && conn->state->crtc == crtc &&
+		if (conn->state &&
+		    (conn->state->crtc == crtc ||
+		     (drm_crtc_index(crtc) == 0 && conn->connector_type == DRM_MODE_CONNECTOR_DSI)) &&
 				cstate->num_connectors < MAX_CONNECTORS) {
+			if (!conn->state->crtc)
+				conn->state->crtc = crtc;
 			cstate->connectors[cstate->num_connectors++] = conn;
 		}
 	drm_connector_list_iter_end(&conn_iter);
+
+	if (!mode->hdisplay && cstate->num_connectors > 0 &&
+	    !list_empty(&cstate->connectors[0]->modes)) {
+		struct drm_display_mode *first_mode =
+			list_first_entry(&cstate->connectors[0]->modes,
+					struct drm_display_mode, head);
+		drm_mode_copy(&state->mode, first_mode);
+		drm_mode_copy(&state->adjusted_mode, first_mode);
+	}
 
 	_sde_crtc_setup_is_ppsplit(state);
 	_sde_crtc_setup_lm_bounds(crtc, state);

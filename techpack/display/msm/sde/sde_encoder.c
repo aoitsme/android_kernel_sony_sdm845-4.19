@@ -1665,6 +1665,9 @@ static int _sde_encoder_update_roi(struct drm_encoder *drm_enc)
 	}
 
 	sde_enc = to_sde_encoder_virt(drm_enc);
+	if (!sde_enc->crtc && drm_enc->crtc)
+		sde_enc->crtc = drm_enc->crtc;
+
 	if (!sde_enc->crtc || !sde_enc->crtc->state) {
 		SDE_ERROR("invalid crtc parameter\n");
 		return -EINVAL;
@@ -2431,6 +2434,9 @@ static int _sde_encoder_rc_frame_done(struct drm_encoder *drm_enc,
 	unsigned int lp, idle_pc_duration;
 	struct msm_drm_thread *disp_thread;
 	bool autorefresh_enabled = false;
+
+	if (!sde_enc->crtc && drm_enc->crtc)
+		sde_enc->crtc = drm_enc->crtc;
 
 	if (!sde_enc->crtc) {
 		SDE_ERROR("invalid crtc, sw_event:%u\n", sw_event);
@@ -3511,6 +3517,11 @@ static void sde_encoder_virt_disable(struct drm_encoder *drm_enc)
 	sde_enc = to_sde_encoder_virt(drm_enc);
 	SDE_DEBUG_ENC(sde_enc, "\n");
 
+	if (sde_encoder_in_cont_splash(drm_enc)) {
+		SDE_DEBUG_ENC(sde_enc, "encoder in cont_splash, skip disable\n");
+		return;
+	}
+
 	priv = drm_enc->dev->dev_private;
 	sde_kms = to_sde_kms(priv->kms);
 	intf_mode = sde_encoder_get_intf_mode(drm_enc);
@@ -4235,10 +4246,15 @@ static void _sde_encoder_kickoff_phys(struct sde_encoder_virt *sde_enc)
 		sde_encoder_misr_configure(&sde_enc->base, true,
 				sde_enc->misr_frame_count);
 
-	sde_crtc_get_misr_info(sde_enc->crtc, &crtc_misr_info);
-	if (crtc_misr_info.misr_enable)
-		sde_crtc_misr_setup(sde_enc->crtc, true,
-				crtc_misr_info.misr_frame_count);
+	if (!sde_enc->crtc && sde_enc->base.crtc)
+		sde_enc->crtc = sde_enc->base.crtc;
+
+	if (sde_enc->crtc) {
+		sde_crtc_get_misr_info(sde_enc->crtc, &crtc_misr_info);
+		if (crtc_misr_info.misr_enable)
+			sde_crtc_misr_setup(sde_enc->crtc, true,
+					crtc_misr_info.misr_frame_count);
+	}
 
 	_sde_encoder_trigger_start(sde_enc->cur_master);
 
@@ -4489,15 +4505,19 @@ static int _sde_encoder_wakeup_time(struct drm_encoder *drm_enc,
 	mode = &sde_enc->cur_master->cached_mode;
 	mdp_transfer_time_us = sde_enc->mode_info.mdp_transfer_time_us;
 
-	vtotal = mode->vtotal;
+	vtotal = mode->vtotal ? mode->vtotal : 2435;
 	if (!mdp_transfer_time_us) {
 		/* mdp_transfer_time set to 0 for video mode */
-		line_time = (1000000 / sde_enc->mode_info.frame_rate) / vtotal;
+		line_time = sde_enc->mode_info.frame_rate ?
+			((1000000 / sde_enc->mode_info.frame_rate) / vtotal) : (16666 / vtotal);
 	} else {
 		line_time = mdp_transfer_time_us / vtotal;
-		threshold_time_us = ((1000000 / sde_enc->mode_info.frame_rate)
-						- mdp_transfer_time_us);
+		threshold_time_us = (sde_enc->mode_info.frame_rate ?
+			((1000000 / sde_enc->mode_info.frame_rate) - mdp_transfer_time_us) : 0);
 	}
+
+	if (!line_time)
+		line_time = 1;
 
 	if (!sde_enc->cur_master->ops.get_line_count) {
 		SDE_DEBUG_ENC(sde_enc, "can't get master line count\n");
@@ -4507,6 +4527,8 @@ static int _sde_encoder_wakeup_time(struct drm_encoder *drm_enc,
 	cur_line = sde_enc->cur_master->ops.get_line_count(sde_enc->cur_master);
 
 	lines_left = (cur_line >= vtotal) ? vtotal : (vtotal - cur_line);
+	if (!lines_left)
+		lines_left = 1;
 
 	time_to_vsync_us = line_time * lines_left;
 
@@ -4856,7 +4878,16 @@ int sde_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc,
 	priv = drm_enc->dev->dev_private;
 	sde_kms = to_sde_kms(priv->kms);
 	disp_info = &sde_enc->disp_info;
-	sde_crtc = to_sde_crtc(sde_enc->crtc);
+	if (!sde_enc->crtc && drm_enc->crtc)
+		sde_enc->crtc = drm_enc->crtc;
+	sde_crtc = sde_enc->crtc ? to_sde_crtc(sde_enc->crtc) : NULL;
+
+	if (sde_enc->crtc && sde_enc->crtc->state) {
+		if (!sde_enc->mode_info.frame_rate && sde_enc->crtc->state->mode.vrefresh)
+			sde_enc->mode_info.frame_rate = sde_enc->crtc->state->mode.vrefresh;
+		if (!sde_enc->mode_info.vtotal && sde_enc->crtc->state->mode.vtotal)
+			sde_enc->mode_info.vtotal = sde_enc->crtc->state->mode.vtotal;
+	}
 
 	SDE_DEBUG_ENC(sde_enc, "\n");
 	SDE_EVT32(DRMID(drm_enc));
@@ -6049,6 +6080,11 @@ int sde_encoder_update_caps_for_cont_splash(struct drm_encoder *encoder,
 			if (phys_enc)
 				phys_enc->cont_splash_enabled = false;
 		}
+		if (sde_enc->cur_master && sde_enc->cur_master->hw_ctl &&
+		    sde_enc->cur_master->hw_ctl->ops.setup_intf_cfg_v1)
+			sde_enc->cur_master->hw_ctl->ops.setup_intf_cfg_v1(
+					sde_enc->cur_master->hw_ctl,
+					&sde_enc->cur_master->intf_cfg_v1);
 		return ret;
 	}
 
@@ -6093,6 +6129,8 @@ int sde_encoder_update_caps_for_cont_splash(struct drm_encoder *encoder,
 			"conn: ->get_mode_info failed. ret=%d\n", ret);
 		return ret;
 	}
+
+	sde_enc->crtc = encoder->crtc;
 
 	if (sde_conn->encoder) {
 		conn->encoder = sde_conn->encoder;

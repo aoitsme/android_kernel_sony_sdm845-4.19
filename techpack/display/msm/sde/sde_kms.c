@@ -1086,18 +1086,14 @@ static void _sde_kms_release_splash_resource(struct sde_kms *sde_kms,
 
 	for (i = 0; i < MAX_DSI_DISPLAYS; i++) {
 		splash_display = &sde_kms->splash_data.splash_display[i];
-		if (splash_display->encoder &&
-				crtc == splash_display->encoder->crtc)
-			break;
-	}
+		if (!splash_display->encoder)
+			continue;
 
-	if (i >= MAX_DSI_DISPLAYS)
-		return;
-
-	if (splash_display->cont_splash_enabled) {
-		sde_encoder_update_caps_for_cont_splash(splash_display->encoder,
-				splash_display, false);
-		_sde_kms_free_splash_region(sde_kms, splash_display);
+		if (splash_display->cont_splash_enabled) {
+			sde_encoder_update_caps_for_cont_splash(splash_display->encoder,
+					splash_display, false);
+			_sde_kms_free_splash_region(sde_kms, splash_display);
+		}
 	}
 
 	/* remove the votes if all displays are done with splash */
@@ -1205,8 +1201,15 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 
 	pm_runtime_put_sync(sde_kms->dev->dev);
 
-	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i)
-		_sde_kms_release_splash_resource(sde_kms, crtc);
+	if (sde_kms->splash_data.num_splash_displays) {
+		drm_for_each_crtc(crtc, sde_kms->dev) {
+			if (crtc->state && crtc->state->active)
+				_sde_kms_release_splash_resource(sde_kms, crtc);
+		}
+	} else {
+		for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i)
+			_sde_kms_release_splash_resource(sde_kms, crtc);
+	}
 
 	sde_kms_check_for_ext_vote(sde_kms, &priv->phandle);
 
@@ -2642,6 +2645,7 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 		connector->encoder = encoder;
 		connector->state->crtc = crtc;
 		connector->state->best_encoder = encoder;
+		encoder->crtc = crtc;
 
 		/* currently consider modes[0] as the preferred mode */
 		drm_mode = list_first_entry(&connector->modes,
