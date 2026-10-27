@@ -1076,8 +1076,8 @@ static void sde_encoder_phys_cmd_tearcheck_config(
 	 * the counter automatically generates vsync every vtotal lines (60.0Hz)
 	 * instead of waiting for 0xFFF0 (505ms) and timing out every frame.
 	 */
-	tc_cfg.sync_cfg_height = mode->vtotal;
-	tc_cfg.vsync_init_val = 0;
+	tc_cfg.sync_cfg_height = 0xFFF0;
+	tc_cfg.vsync_init_val = mode->vdisplay;
 	tc_cfg.sync_threshold_start = _get_tearcheck_threshold(phys_enc,
 			&extra_frame_trigger_time);
 	tc_cfg.sync_threshold_continue = DEFAULT_TEARCHECK_SYNC_THRESH_CONTINUE;
