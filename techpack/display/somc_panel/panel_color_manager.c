@@ -559,11 +559,11 @@ static int somc_panel_update_merged_pcc_cache(
 			__func__, __LINE__,
 			pcc_data->tbl_idx, color_mgr->pcc_profile);
 
-	/* First, construct panel calibration matrix */
+	/* Construct neutral identity panel calibration matrix (1.0 R/G/B) to match framebuffer */
 	memset(&panel_cal, 0, sizeof(panel_cal));
-	panel_cal.r.r = pcc_data->color_tbl[table_idx].r_data;
-	panel_cal.g.g = pcc_data->color_tbl[table_idx].g_data;
-	panel_cal.b.b = pcc_data->color_tbl[table_idx].b_data;
+	panel_cal.r.r = 0x8000;
+	panel_cal.g.g = 0x8000;
+	panel_cal.b.b = 0x8000;
 
 	if (!color_mgr->system_calibration_valid) {
 		pr_debug("%s (%d): System calibration unset; "

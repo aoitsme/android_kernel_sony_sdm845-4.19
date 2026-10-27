@@ -674,6 +674,7 @@ static int vco_10nm_set_rate(struct clk_hw *hw, unsigned long rate,
 	pr_debug("ndx=%d, rate=%lu\n", rsc->index, rate);
 
 	rsc->vco_current_rate = rate;
+	rsc->vco_cached_rate = rate;
 	rsc->vco_ref_clk_rate = vco->ref_clk_rate;
 	rsc->dfps_trigger = false;
 
@@ -912,6 +913,7 @@ static int shadow_vco_10nm_set_rate(struct clk_hw *hw, unsigned long rate,
 	pr_debug("ndx=%d, rate=%lu\n", rsc->index, rate);
 
 	rsc->vco_current_rate = rate;
+	rsc->vco_cached_rate = rate;
 	rsc->vco_ref_clk_rate = vco->ref_clk_rate;
 
 	rc = mdss_pll_resource_enable(rsc, true);
@@ -1141,6 +1143,7 @@ static void vco_10nm_unprepare(struct clk_hw *hw)
 static int vco_10nm_prepare(struct clk_hw *hw)
 {
 	int rc = 0;
+	unsigned long vco_rate;
 	struct dsi_pll_vco_clk *vco = to_vco_clk_hw(hw);
 	struct mdss_pll_resources *pll = vco->priv;
 
@@ -1160,25 +1163,29 @@ static int vco_10nm_prepare(struct clk_hw *hw)
 		return rc;
 	}
 
-	if ((pll->vco_cached_rate != 0) &&
-		(pll->vco_cached_rate == clk_hw_get_rate(hw))) {
-		rc = hw->init->ops->set_rate(hw, pll->vco_cached_rate,
-				pll->vco_cached_rate);
+	vco_rate = pll->vco_cached_rate ?
+				pll->vco_cached_rate : clk_hw_get_rate(hw);
+
+	if (vco_rate != 0) {
+		rc = hw->init->ops->set_rate(hw, vco_rate, vco_rate);
 		if (rc) {
 			pr_err("pll(%d) set_rate failed, rc=%d\n",
 			       pll->index, rc);
 			mdss_pll_resource_enable(pll, false);
 			return rc;
 		}
-		pr_debug("cfg0=%d, cfg1=%d\n", pll->cached_cfg0,
-			pll->cached_cfg1);
-		MDSS_PLL_REG_W(pll->phy_base, PHY_CMN_CLK_CFG0,
-					pll->cached_cfg0);
-		if (pll->slave)
-			MDSS_PLL_REG_W(pll->slave->phy_base, PHY_CMN_CLK_CFG0,
-				       pll->cached_cfg0);
-		MDSS_PLL_REG_W(pll->pll_base, PLL_PLL_OUTDIV_RATE,
-					pll->cached_outdiv);
+		if (pll->cached_cfg0) {
+			pr_debug("cfg0=%d, cfg1=%d\n", pll->cached_cfg0,
+				pll->cached_cfg1);
+			MDSS_PLL_REG_W(pll->phy_base, PHY_CMN_CLK_CFG0,
+						pll->cached_cfg0);
+			if (pll->slave)
+				MDSS_PLL_REG_W(pll->slave->phy_base, PHY_CMN_CLK_CFG0,
+					       pll->cached_cfg0);
+		}
+		if (pll->cached_outdiv)
+			MDSS_PLL_REG_W(pll->pll_base, PLL_PLL_OUTDIV_RATE,
+						pll->cached_outdiv);
 	}
 	MDSS_PLL_ATRACE_BEGIN("pll_lock");
 	trace_mdss_pll_lock_start((u64)pll->vco_cached_rate,
@@ -1229,8 +1236,10 @@ static unsigned long vco_10nm_recalc_rate(struct clk_hw *hw,
 		return 0;
 	}
 
+#ifndef CONFIG_ARCH_SONY_TAMA
 	if (!dsi_pll_10nm_lock_status(pll))
 		pll->handoff_resources = true;
+#endif
 
 
 	(void)mdss_pll_resource_enable(pll, false);

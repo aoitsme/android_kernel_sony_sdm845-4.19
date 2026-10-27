@@ -109,6 +109,10 @@ static bool sdecustom = true;
 module_param(sdecustom, bool, 0400);
 MODULE_PARM_DESC(sdecustom, "Enable customizations for sde clients");
 
+static bool cont_splash_en = false;
+module_param(cont_splash_en, bool, 0644);
+MODULE_PARM_DESC(cont_splash_en, "Enable continuous splash handover");
+
 static int sde_kms_hw_init(struct msm_kms *kms);
 static int _sde_kms_mmu_destroy(struct sde_kms *sde_kms);
 static int _sde_kms_mmu_init(struct sde_kms *sde_kms);
@@ -3405,6 +3409,11 @@ static int _sde_kms_get_splash_data(struct sde_splash_data *data)
 
 	if (!data)
 		return -EINVAL;
+
+	if (!cont_splash_en) {
+		DRM_INFO("cont_splash feature disabled\n");
+		return -EINVAL;
+	}
 
 	memset(data, 0, sizeof(*data));
 
