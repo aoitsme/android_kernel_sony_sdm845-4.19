@@ -11,6 +11,8 @@
 	synaptics_clearpad: synaptics_clearpad@2c {
 		compatible = "synaptics,clearpad";
 		reg = <0x2c>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&sdm_gpio_125>;
 		interrupt-parent = <&tlmm>;
 		interrupts = <125 0x2008>;
 		synaptics,irq_gpio = <&tlmm 125 0x2008>;
@@ -24,7 +26,7 @@
 		pen_supported = <0>;
 		glove_supported = <1>;
 		cover_supported = <1>;
-		touch_pressure_enabled = <1>;
+		touch_pressure_enabled = <0>;
 		touch_size_enabled = <0>;
 		touch_orientation_enabled = <0>;
 		preset_x_max = <1079>;
@@ -33,7 +35,7 @@
 		wakeup_gesture_supported = <1>;
 		wakeup_gesture_lpm_disabled = <1>;
 		wakeup_gesture_timeout = <0>;
-		stamina_mode_supported = <0x80000007>;
+		stamina_mode_supported = <0>;
 		doze_default_time = <35>;
 		doze_glove_mode_time = <35>;
 		doze_cover_mode_time = <35>;
