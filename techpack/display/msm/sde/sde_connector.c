@@ -94,10 +94,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;
 
-	if (!c_conn->allow_bl_update) {
-		c_conn->unset_bl_level = bl_lvl;
-		return 0;
-	}
+	c_conn->allow_bl_update = true;
 
 	if (c_conn->ops.set_backlight) {
 		/* skip notifying user space if bl is 0 */
@@ -2618,6 +2615,7 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 	c_conn->dpms_mode = DRM_MODE_DPMS_ON;
 	c_conn->lp_mode = 0;
 	c_conn->last_panel_power_mode = SDE_MODE_DPMS_ON;
+	c_conn->allow_bl_update = true;
 
 	sde_kms = to_sde_kms(priv->kms);
 	if (sde_kms->vbif[VBIF_NRT]) {

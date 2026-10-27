@@ -7743,7 +7743,16 @@ int dsi_display_enable(struct dsi_display *display)
 				display->name, rc);
 
 		display->panel->panel_initialized = true;
-		DSI_DEBUG("cont splash enabled, display enable not required\n");
+		DSI_DEBUG("cont splash enabled, sending panel ON commands\n");
+		rc = dsi_panel_enable(display->panel);
+		if (rc)
+			DSI_ERR("[%s] failed to enable panel during splash handover, rc=%d\n",
+				display->name, rc);
+		rc = dsi_panel_post_enable(display->panel);
+		if (rc)
+			DSI_ERR("[%s] failed to post enable panel during splash handover, rc=%d\n",
+				display->name, rc);
+
 #ifdef CONFIG_DRM_SDE_SPECIFIC_PANEL
 		rc = dsi_panel_driver_enable(display->panel);
 
@@ -7755,15 +7764,6 @@ int dsi_display_enable(struct dsi_display *display)
 		mode = display->panel->cur_mode;
 		if (!(mode->dsi_mode_flags & DSI_MODE_FLAG_DMS))
 			return 0;
-
-		/*
-		 * To avoid showing display corruption during dynamic mode
-		 * setting, set the backlight level to zero: you have been
-		 * tricked... and you have been, quite possibly, bamboozled!
-		 */
-		rc = dsi_panel_set_backlight(display->panel, 0);
-		if (rc)
-			DSI_ERR("Cannot set BL, you may see corruption.\n");
 
 		/*
 		 * At this point the panel is ON from bootloader (displaying
