@@ -26,7 +26,7 @@
 		pen_supported = <0>;
 		glove_supported = <1>;
 		cover_supported = <1>;
-		touch_pressure_enabled = <0>;
+		touch_pressure_enabled = <1>;
 		touch_size_enabled = <0>;
 		touch_orientation_enabled = <0>;
 		preset_x_max = <1079>;
