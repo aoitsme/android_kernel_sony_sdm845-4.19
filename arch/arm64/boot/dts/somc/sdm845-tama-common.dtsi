@@ -2865,7 +2865,7 @@
 		config {
 			pins = "gpio125";
 			drive-strength = <2>;
-			bias-pull-down;
+			bias-pull-up;
 			input-enable;
 		};
 	};
