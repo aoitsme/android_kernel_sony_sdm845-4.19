@@ -7743,15 +7743,7 @@ int dsi_display_enable(struct dsi_display *display)
 				display->name, rc);
 
 		display->panel->panel_initialized = true;
-		DSI_DEBUG("cont splash enabled, sending panel ON commands\n");
-		rc = dsi_panel_enable(display->panel);
-		if (rc)
-			DSI_ERR("[%s] failed to enable panel during splash handover, rc=%d\n",
-				display->name, rc);
-		rc = dsi_panel_post_enable(display->panel);
-		if (rc)
-			DSI_ERR("[%s] failed to post enable panel during splash handover, rc=%d\n",
-				display->name, rc);
+		DSI_DEBUG("cont splash enabled, display enable not required\n");
 
 #ifdef CONFIG_DRM_SDE_SPECIFIC_PANEL
 		rc = dsi_panel_driver_enable(display->panel);
@@ -7955,6 +7947,12 @@ int dsi_display_post_enable(struct dsi_display *display)
 			DSI_ALL_CLKS, DSI_CLK_OFF);
 
 	mutex_unlock(&display->display_lock);
+
+	if (!display->panel->bl_config.bl_level) {
+		u32 def_bl = 1024;
+		(void)dsi_display_set_backlight(display->drm_conn, display, def_bl);
+	}
+
 	return rc;
 }
 

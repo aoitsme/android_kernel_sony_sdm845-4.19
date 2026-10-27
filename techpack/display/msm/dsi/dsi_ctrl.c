@@ -1753,6 +1753,12 @@ static int dsi_disable_ulps(struct dsi_ctrl *dsi_ctrl)
 
 static void dsi_ctrl_enable_error_interrupts(struct dsi_ctrl *dsi_ctrl)
 {
+	if (dsi_ctrl->host_config.panel_mode == DSI_OP_CMD_MODE) {
+		if (dsi_ctrl->hw.ops.error_intr_ctrl)
+			dsi_ctrl->hw.ops.error_intr_ctrl(&dsi_ctrl->hw, false);
+		return;
+	}
+
 	if (dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE &&
 			!dsi_ctrl->host_config.u.video_engine.bllp_lp11_en &&
 			!dsi_ctrl->host_config.u.video_engine.eof_bllp_lp11_en)
@@ -2522,6 +2528,15 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 {
 	struct dsi_event_cb_info cb_info;
 
+	/* disable and ignore error interrupts in command mode */
+	if (dsi_ctrl->host_config.panel_mode == DSI_OP_CMD_MODE) {
+		if (dsi_ctrl->hw.ops.error_intr_ctrl)
+			dsi_ctrl->hw.ops.error_intr_ctrl(&dsi_ctrl->hw, false);
+		if (dsi_ctrl->hw.ops.clear_error_status)
+			dsi_ctrl->hw.ops.clear_error_status(&dsi_ctrl->hw, error);
+		return;
+	}
+
 	cb_info = dsi_ctrl->irq_info.irq_err_cb;
 
 	/* disable error interrupts */
@@ -2537,6 +2552,10 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	if (error & 0x3000E00)
 		DSI_CTRL_ERR(dsi_ctrl, "dsi PHY contention error: 0x%lx\n",
 				error);
+
+	/* ignore spurious TX/RX timeout for command mode */
+	if (dsi_ctrl->host_config.panel_mode == DSI_OP_CMD_MODE)
+		error &= ~(DSI_HS_TX_TIMEOUT | DSI_LP_RX_TIMEOUT | DSI_BTA_TIMEOUT);
 
 	/* ignore TX timeout if blpp_lp11 is disabled */
 	if (dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE &&
@@ -2653,8 +2672,9 @@ static irqreturn_t dsi_ctrl_isr(int irq, void *ptr)
 
 	SDE_EVT32_IRQ(dsi_ctrl->cell_index, status, errors);
 
-	/* handle DSI error recovery */
-	if (status & DSI_ERROR)
+	/* handle DSI error recovery (video mode only) */
+	if ((status & DSI_ERROR) &&
+	    (dsi_ctrl->host_config.panel_mode != DSI_OP_CMD_MODE))
 		dsi_ctrl_handle_error_status(dsi_ctrl, errors);
 
 	if (status & DSI_CMD_MODE_DMA_DONE) {
