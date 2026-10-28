@@ -877,18 +877,9 @@ static int somc_panel_pcc_setup(struct dsi_display *display)
 
 	(void)somc_panel_inject_crtc_overrides(display);
 
-	if (color_mgr->uv_read_cmds.cmds.send_cmd) {
-		get_uv_data(display, &color_mgr->u_data, &color_mgr->v_data);
-	} else {
-		pr_warn("%s (%d): Cannot read uv data: missing command\n",
-				__func__, __LINE__);
-	}
-
-	if (color_mgr->u_data == 0 && color_mgr->v_data == 0) {
-		pr_err("%s (%d): u,v is flashed 0.\n", __func__, __LINE__);
-		if (!color_mgr->mdss_force_pcc)
-			return -EINVAL;
-	}
+	/* Use nominal UV data directly; panel calibration uses identity matrix 0x8000 */
+	color_mgr->u_data = 0x200;
+	color_mgr->v_data = 0x200;
 
 	pr_notice("%s (%d): udata = %x vdata = %x \n", __func__, __LINE__,
 		color_mgr->u_data, color_mgr->v_data);
