@@ -4147,6 +4147,10 @@ void sde_encoder_helper_hw_reset(struct sde_encoder_phys *phys_enc)
 	SDE_DEBUG_ENC(sde_enc, "ctl %d reset\n",  ctl->idx);
 	SDE_EVT32(DRMID(phys_enc->parent), ctl->idx);
 
+	rc = ctl->ops.reset(ctl);
+	if (rc)
+		SDE_ERROR_ENC(sde_enc, "ctl reset failure rc=%d\n", rc);
+
 	if (phys_enc->ops.is_master && phys_enc->ops.is_master(phys_enc) &&
 			phys_enc->connector) {
 		sde_con = to_sde_connector(phys_enc->connector);
@@ -4946,10 +4950,13 @@ int sde_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc,
 	is_cmd_mode = sde_encoder_check_curr_mode(drm_enc,
 				MSM_DISPLAY_CMD_MODE);
 	if (sde_enc->cur_master && sde_enc->cur_master->connector
-			&& is_cmd_mode)
+			&& is_cmd_mode) {
 		sde_enc->frame_trigger_mode = sde_connector_get_property(
 			sde_enc->cur_master->connector->state,
 			CONNECTOR_PROP_CMD_FRAME_TRIGGER_MODE);
+		if (sde_enc->frame_trigger_mode == FRAME_DONE_WAIT_DEFAULT)
+			sde_enc->frame_trigger_mode = FRAME_DONE_WAIT_POSTED_START;
+	}
 
 	_sde_encoder_helper_hdr_plus_mempool_update(sde_enc);
 
@@ -5218,8 +5225,12 @@ int sde_encoder_prepare_commit(struct drm_encoder *drm_enc)
 		if (phys && phys->ops.prepare_commit)
 			phys->ops.prepare_commit(phys);
 
-		if (phys && phys->enable_state == SDE_ENC_ERR_NEEDS_HW_RESET)
-			ret = -ETIMEDOUT;
+		if (phys && phys->enable_state == SDE_ENC_ERR_NEEDS_HW_RESET) {
+			if (phys->ops.hw_reset)
+				phys->ops.hw_reset(phys);
+			else
+				phys->enable_state = SDE_ENC_ENABLED;
+		}
 
 		if (phys && phys->hw_ctl) {
 			ctl = phys->hw_ctl;
