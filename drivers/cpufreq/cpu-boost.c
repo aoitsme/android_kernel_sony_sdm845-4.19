@@ -63,7 +63,7 @@ static bool sched_boost_active;
 
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
-#define MIN_INPUT_INTERVAL (20 * USEC_PER_MSEC)
+#define MIN_INPUT_INTERVAL (60 * USEC_PER_MSEC)
 
 static ssize_t store_input_boost_freq(struct kobject *kobj,
 				      struct kobj_attribute *attr,
@@ -249,23 +249,11 @@ static void cpuboost_input_event(struct input_handle *handle,
 	if (now - last_input_time < MIN_INPUT_INTERVAL)
 		return;
 
-	last_input_time = now;
-
-	/*
-	 * If boost is already active, extend the deadline so the CPU frequency
-	 * remains high throughout the entire drag/swipe motion instead of
-	 * oscillating with a sawtooth frequency drop.
-	 */
-	if (delayed_work_pending(&input_boost_rem)) {
-		mod_delayed_work(cpu_boost_wq, &input_boost_rem,
-				msecs_to_jiffies(input_boost_ms));
-		return;
-	}
-
 	if (work_pending(&input_boost_work))
 		return;
 
 	queue_work(cpu_boost_wq, &input_boost_work);
+	last_input_time = now;
 }
 
 static int cpuboost_input_connect(struct input_handler *handler,
