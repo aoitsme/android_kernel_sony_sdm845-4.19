@@ -1067,18 +1067,24 @@ static void sde_encoder_phys_cmd_tearcheck_config(
 	tc_cfg.hw_vsync_mode = 0;
 
 	/*
-	 * By setting sync_cfg_height to near max register value, we essentially
-	 * disable sde hw generated TE signal, since hw TE will arrive first.
-	 * Only caveat is if due to error, we hit wrap-around.
-	 * During continuous splash, panel TE has not been started yet by DCS on
-	 * commands, so configure internal counter to wrap at vtotal and start at 0
-	 * to generate autonomous 60Hz RD_PTR VSYNC interrupts for SurfaceFlinger.
+	 * In normal operation, external panel TE arrives every 16.6ms (~vtotal lines)
+	 * and resets the counter to vsync_init_val (vdisplay), crossing rd_ptr_irq
+	 * once per frame to deliver solid 60.00Hz VSYNC.
+	 *
+	 * Set sync_cfg_height slightly above mode->vtotal (+100 lines, ~0.74ms margin).
+	 * Because external TE arrives before vtotal + 100, the counter never wraps
+	 * autonomously during normal 60Hz rendering, completely avoiding duplicate
+	 * interrupts.
+	 * If external TE is ever briefly delayed or dropped, the counter safely wraps
+	 * at vtotal + 100 (17.4ms) instead of waiting for 0xFFF0 (505ms), preventing
+	 * KICKOFF_TIMEOUT_MS (333ms) kickoff timeouts, SDE error recovery, and display
+	 * freezes!
 	 */
 	if (phys_enc->cont_splash_enabled) {
 		tc_cfg.sync_cfg_height = mode->vtotal;
 		tc_cfg.vsync_init_val = 0;
 	} else {
-		tc_cfg.sync_cfg_height = 0xFFF0;
+		tc_cfg.sync_cfg_height = mode->vtotal + 100;
 		tc_cfg.vsync_init_val = mode->vdisplay;
 	}
 	tc_cfg.sync_threshold_start = _get_tearcheck_threshold(phys_enc,
