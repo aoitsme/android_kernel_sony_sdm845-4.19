@@ -815,6 +815,10 @@ static u64 _sde_core_perf_get_core_clk_rate(struct sde_kms *kms)
 	if (kms->perf.perf_tune.mode == SDE_PERF_MODE_FIXED)
 		clk_rate = max(kms->perf.fix_core_clk_rate, clk_rate);
 
+	/* Enforce a minimum floor of 300MHz to eliminate UI and scroll stutter */
+	if (clk_rate < 300000000ULL)
+		clk_rate = 300000000ULL;
+
 	SDE_DEBUG("clk:%llu\n", clk_rate);
 
 	return clk_rate;
@@ -1322,6 +1326,13 @@ int sde_core_perf_init(struct sde_core_perf *perf,
 	if (catalog->perf.default_perf_mode < SDE_PERF_MODE_MAX &&
 	    catalog->perf.default_perf_mode >= 0) {
 		perf->perf_tune.mode = catalog->perf.default_perf_mode;
+		if (catalog->perf.default_perf_mode == SDE_PERF_MODE_MAXIMUM ||
+		    catalog->perf.default_perf_mode == SDE_PERF_MODE_MINIMUM) {
+			perf->perf_tune.min_core_clk = perf->max_core_clk_rate;
+			perf->perf_tune.min_bus_vote =
+					(u64) catalog->perf.max_bw_high * 1000;
+			perf->perf_tune.mode_changed = true;
+		}
 		SDE_DEBUG("Set perf mode %d\n", catalog->perf.default_perf_mode);
 	} else {
 		SDE_ERROR("Invalid default SDE perf mode. Ignoring setting\n");
