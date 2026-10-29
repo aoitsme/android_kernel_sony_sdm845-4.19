@@ -4813,12 +4813,18 @@ end:
 static int clearpad_read_fingers_f12(struct clearpad_t *this)
 {
 	int rc, finger, num_fingers;
-	u8 *buf;
+	u8 stack_buf[128];
+	u8 *buf = stack_buf;
+	size_t buf_sz = this->extents.n_fingers *
+			this->extents.n_bytes_per_object;
 
-	buf = kzalloc(this->extents.n_fingers *
-			this->extents.n_bytes_per_object, GFP_KERNEL);
-	if (!buf)
-		goto end;
+	if (buf_sz > sizeof(stack_buf)) {
+		buf = kzalloc(buf_sz, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+	} else {
+		memset(stack_buf, 0, buf_sz);
+	}
 
 	rc = get_num_fingers_f12(this, &num_fingers);
 	if (rc)
@@ -4838,7 +4844,8 @@ static int clearpad_read_fingers_f12(struct clearpad_t *this)
 	if (this->input->users)
 		input_report_key(this->input, BTN_TOUCH, num_fingers > 0);
 end:
-	kfree(buf);
+	if (buf != stack_buf)
+		kfree(buf);
 	return rc;
 }
 
