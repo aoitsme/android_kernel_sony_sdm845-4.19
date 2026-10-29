@@ -63,7 +63,7 @@ static bool sched_boost_active;
 
 static struct delayed_work input_boost_rem;
 static u64 last_input_time;
-#define MIN_INPUT_INTERVAL (60 * USEC_PER_MSEC)
+#define MIN_INPUT_INTERVAL (40 * USEC_PER_MSEC)
 
 static ssize_t store_input_boost_freq(struct kobject *kobj,
 				      struct kobj_attribute *attr,
@@ -350,7 +350,7 @@ static int cpu_boost_init(void)
 	}
 	input_boost_enabled = true;
 	sched_boost_on_input = 1;
-	input_boost_ms = 120;
+	input_boost_ms = 96;
 	cpufreq_register_notifier(&boost_adjust_nb, CPUFREQ_POLICY_NOTIFIER);
 
 	cpu_boost_kobj = kobject_create_and_add("cpu_boost",

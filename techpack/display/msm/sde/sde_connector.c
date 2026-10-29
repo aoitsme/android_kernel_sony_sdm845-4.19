@@ -2528,7 +2528,8 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 
 		if (display_info->capabilities & MSM_DISPLAY_CAP_CMD_MODE)
 			msm_property_install_enum(&c_conn->property_info,
-				"frame_trigger_mode", 0, 0,
+				"frame_trigger_mode", 0,
+				FRAME_DONE_WAIT_POSTED_START,
 				e_frame_trigger_mode,
 				ARRAY_SIZE(e_frame_trigger_mode),
 				CONNECTOR_PROP_CMD_FRAME_TRIGGER_MODE);

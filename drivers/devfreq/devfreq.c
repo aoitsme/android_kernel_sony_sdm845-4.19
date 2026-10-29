@@ -672,6 +672,23 @@ struct devfreq *devfreq_add_device(struct device *dev,
 		goto err_out;
 	}
 
+	if (devfreq->dev.kobj.parent) {
+		const char *dname = dev_name(dev);
+
+		if (!strcmp(dname, "soc:qcom,cpu-llcc-ddr-bw"))
+			sysfs_create_link(devfreq->dev.kobj.parent,
+					  &devfreq->dev.kobj, "soc:qcom,cpubw");
+		else if (!strcmp(dname, "soc:qcom,cpu-cpu-llcc-bw"))
+			sysfs_create_link(devfreq->dev.kobj.parent,
+					  &devfreq->dev.kobj, "soc:qcom,llccbw");
+		else if (!strcmp(dname, "soc:qcom,cpu0-cpu-l3-lat"))
+			sysfs_create_link(devfreq->dev.kobj.parent,
+					  &devfreq->dev.kobj, "soc:qcom,l3-cpu0");
+		else if (!strcmp(dname, "soc:qcom,cpu4-cpu-l3-lat"))
+			sysfs_create_link(devfreq->dev.kobj.parent,
+					  &devfreq->dev.kobj, "soc:qcom,l3-cpu4");
+	}
+
 	devfreq->trans_table =
 		devm_kzalloc(&devfreq->dev,
 			     array3_size(sizeof(unsigned int),

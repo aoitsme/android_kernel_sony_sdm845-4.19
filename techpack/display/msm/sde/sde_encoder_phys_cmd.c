@@ -554,8 +554,14 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 		SDE_DBG_DUMP("dsi_dbg_bus");
 	}
 
-	/* request a ctl reset before the next kickoff */
-	phys_enc->enable_state = SDE_ENC_ERR_NEEDS_HW_RESET;
+	/*
+	 * Perform immediate hardware reset of CTL and DSI to recover
+	 * pipeline without locking up subsequent frames in SDE_ENC_ERR_NEEDS_HW_RESET.
+	 */
+	if (phys_enc->ops.hw_reset)
+		phys_enc->ops.hw_reset(phys_enc);
+	else
+		phys_enc->enable_state = SDE_ENC_ENABLED;
 
 exit:
 	if (phys_enc->parent_ops.handle_frame_done) {
@@ -1067,24 +1073,18 @@ static void sde_encoder_phys_cmd_tearcheck_config(
 	tc_cfg.hw_vsync_mode = 0;
 
 	/*
-	 * In normal operation, external panel TE arrives every 16.6ms (~vtotal lines)
-	 * and resets the counter to vsync_init_val (vdisplay), crossing rd_ptr_irq
-	 * once per frame to deliver solid 60.00Hz VSYNC.
-	 *
-	 * Set sync_cfg_height slightly above mode->vtotal (+100 lines, ~0.74ms margin).
-	 * Because external TE arrives before vtotal + 100, the counter never wraps
-	 * autonomously during normal 60Hz rendering, completely avoiding duplicate
-	 * interrupts.
-	 * If external TE is ever briefly delayed or dropped, the counter safely wraps
-	 * at vtotal + 100 (17.4ms) instead of waiting for 0xFFF0 (505ms), preventing
-	 * KICKOFF_TIMEOUT_MS (333ms) kickoff timeouts, SDE error recovery, and display
-	 * freezes!
+	 * During continuous splash, panel TE has not been started yet by DCS on
+	 * commands, so configure internal counter to wrap at vtotal and start at 0
+	 * to generate autonomous 60Hz RD_PTR VSYNC interrupts for SurfaceFlinger.
+	 * Once splash handover is complete, set sync_cfg_height to 0xFFF0 so the
+	 * external panel TE pulses phase-align and drive tearcheck at 60Hz without
+	 * duplicate internal counter collisions.
 	 */
 	if (phys_enc->cont_splash_enabled) {
 		tc_cfg.sync_cfg_height = mode->vtotal;
 		tc_cfg.vsync_init_val = 0;
 	} else {
-		tc_cfg.sync_cfg_height = mode->vtotal + 100;
+		tc_cfg.sync_cfg_height = 0xFFF0;
 		tc_cfg.vsync_init_val = mode->vdisplay;
 	}
 	tc_cfg.sync_threshold_start = _get_tearcheck_threshold(phys_enc,
@@ -1673,7 +1673,6 @@ static int sde_encoder_phys_cmd_wait_for_commit_done(
 	/* wait for posted start or serialize trigger */
 	pending_cnt = atomic_read(&phys_enc->pending_kickoff_cnt);
 	if ((pending_cnt > 1) ||
-	    (pending_cnt && (scheduler_status & BIT(0))) ||
 	    (!rc && phys_enc->frame_trigger_mode == FRAME_DONE_WAIT_SERIALIZE))
 		goto wait_for_idle;
 
