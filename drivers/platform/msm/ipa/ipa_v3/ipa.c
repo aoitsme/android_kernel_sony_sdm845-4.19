@@ -6244,7 +6244,7 @@ static ssize_t ipa3_write(struct file *file, const char __user *buf,
 	int ret = 0;
 	int i = 0;
 
-	if (count < 2)
+	if (count < 1)
 		return -EFAULT;
 
 	dbg_buff = kmalloc((count + 1) * sizeof(char), GFP_KERNEL);
