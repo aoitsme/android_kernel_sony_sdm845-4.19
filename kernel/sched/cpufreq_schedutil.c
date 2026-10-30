@@ -586,7 +586,7 @@ static inline bool sugov_cpu_is_busy(struct sugov_cpu *sg_cpu) { return false; }
 #endif /* CONFIG_NO_HZ_COMMON */
 
 #define NL_RATIO 75
-#define DEFAULT_HISPEED_LOAD 80
+#define DEFAULT_HISPEED_LOAD 65
 #define DEFAULT_CPU0_RTG_BOOST_FREQ 1209600
 #define DEFAULT_CPU4_RTG_BOOST_FREQ 1536000
 #define DEFAULT_CPU7_RTG_BOOST_FREQ 0
@@ -949,7 +949,11 @@ static ssize_t hispeed_load_store(struct gov_attr_set *attr_set,
 	if (kstrtouint(buf, 10, &tunables->hispeed_load))
 		return -EINVAL;
 
-	tunables->hispeed_load = min(100U, tunables->hispeed_load);
+	/*
+	 * Clamp hispeed_load to at most 65% so CPU frequency ramps up
+	 * quickly on UI activity, even if vendor rc files request 90%.
+	 */
+	tunables->hispeed_load = min(65U, tunables->hispeed_load);
 
 	return count;
 }
