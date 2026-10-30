@@ -9,6 +9,7 @@
 #include <linux/wait.h>
 #include <linux/delay.h>
 #include <linux/rpmsg.h>
+#include <ipc/apr.h>
 #include <ipc/apr_tal.h>
 #include <linux/of_device.h>
 
@@ -21,6 +22,12 @@ enum apr_channel_state {
 
 static struct apr_svc_ch_dev
 	apr_svc_ch[APR_DL_MAX][APR_DEST_MAX][APR_CLIENT_MAX];
+
+bool apr_tal_is_adsp_connected(void)
+{
+	return apr_svc_ch[APR_DL_SMD][APR_DEST_QDSP6][APR_CLIENT_AUDIO].channel_state == APR_CH_CONNECTED;
+}
+EXPORT_SYMBOL(apr_tal_is_adsp_connected);
 
 /**
  * apr_tal_write() - Write a message across to the remote processor
@@ -233,6 +240,7 @@ static int apr_tal_rpmsg_probe(struct rpmsg_device *rpdev)
 		apr_ch->channel_state = APR_CH_CONNECTED;
 		dev_set_drvdata(&rpdev->dev, apr_ch);
 		wake_up(&apr_ch->wait);
+		apr_adsp_up();
 	} else if(strstr(dest, "mpss")) {
 		apr_ch =
 		&apr_svc_ch[APR_DL_SMD][APR_DEST_MODEM][APR_CLIENT_AUDIO];

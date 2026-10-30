@@ -109,7 +109,11 @@ static int audio_notifer_get_default_service(int domain)
 	/* initial service to connect per domain */
 	switch (domain) {
 	case AUDIO_NOTIFIER_ADSP_DOMAIN:
+#ifdef CONFIG_MSM_QDSP6_PDR
 		service = AUDIO_NOTIFIER_PDR_SERVICE;
+#else
+		service = AUDIO_NOTIFIER_SSR_SERVICE;
+#endif
 		break;
 	case AUDIO_NOTIFIER_MODEM_DOMAIN:
 		service = AUDIO_NOTIFIER_SSR_SERVICE;
@@ -272,9 +276,10 @@ static int audio_notifer_reg_client_service(struct client_data *client_data,
 
 	/*
 	 * PDR registration returns current state
-	 * Force callback of client with current state for PDR
+	 * Force callback of client with current state for PDR or if already UP
 	 */
-	if (client_data->service == AUDIO_NOTIFIER_PDR_SERVICE) {
+	if (client_data->service == AUDIO_NOTIFIER_PDR_SERVICE ||
+	    service_data[service][domain].state == AUDIO_NOTIFIER_SERVICE_UP) {
 		data.service = service;
 		data.domain = domain;
 		(void)client_data->nb->notifier_call(client_data->nb,
@@ -299,9 +304,9 @@ static int audio_notifer_reg_client(struct client_data *client_data)
 
 	/* Search through services to find a valid one to register client on. */
 	for (; service >= 0; service--) {
-		/* If a service is not initialized, wait for it to come up. */
+		/* If a service is not initialized, try next available service */
 		if (service_data[service][domain].state == UNINIT_SERVICE)
-			goto done;
+			continue;
 		/* Skip unsupported service and domain combinations. */
 		if (service_data[service][domain].state < 0)
 			continue;

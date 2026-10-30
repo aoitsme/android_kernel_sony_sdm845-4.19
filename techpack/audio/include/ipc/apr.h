@@ -155,6 +155,7 @@ struct apr_pkt_cfg {
 };
 
 int apr_load_adsp_image(void);
+void apr_adsp_up(void);
 struct apr_client *apr_get_client(int dest_id, int client_id);
 int apr_wait_for_device_up(int dest_id);
 int apr_get_svc(const char *svc_name, int dest_id, int *client_id,
