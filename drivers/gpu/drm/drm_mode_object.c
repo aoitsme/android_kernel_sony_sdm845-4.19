@@ -458,6 +458,13 @@ static int set_property_atomic(struct drm_mode_object *obj,
 	struct drm_modeset_acquire_ctx ctx;
 	int ret;
 
+	if (prop != dev->mode_config.dpms_property) {
+		drm_modeset_lock_all(dev);
+		ret = drm_atomic_obj_set_property(obj, prop, prop_value);
+		drm_modeset_unlock_all(dev);
+		return ret;
+	}
+
 	state = drm_atomic_state_alloc(dev);
 	if (!state)
 		return -ENOMEM;

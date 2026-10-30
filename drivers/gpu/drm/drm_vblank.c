@@ -1125,11 +1125,7 @@ void drm_crtc_vblank_off(struct drm_crtc *crtc)
 	struct drm_device *dev = crtc->dev;
 	unsigned int pipe = drm_crtc_index(crtc);
 	struct drm_vblank_crtc *vblank = &dev->vblank[pipe];
-	struct drm_pending_vblank_event *e, *t;
-
-	ktime_t now;
 	unsigned long irqflags;
-	u64 seq;
 
 	if (WARN_ON(pipe >= dev->num_crtcs))
 		return;
@@ -1156,20 +1152,6 @@ void drm_crtc_vblank_off(struct drm_crtc *crtc)
 		vblank->inmodeset = 1;
 	}
 	spin_unlock(&dev->vbl_lock);
-
-	/* Send any queued vblank events, lest the natives grow disquiet */
-	seq = drm_vblank_count_and_time(dev, pipe, &now);
-
-	list_for_each_entry_safe(e, t, &dev->vblank_event_list, base.link) {
-		if (e->pipe != pipe)
-			continue;
-		DRM_DEBUG("Sending premature vblank event on disable: "
-			  "wanted %llu, current %llu\n",
-			  e->sequence, seq);
-		list_del(&e->base.link);
-		drm_vblank_put(dev, pipe);
-		send_vblank_event(dev, e, seq, now);
-	}
 	spin_unlock_irqrestore(&dev->event_lock, irqflags);
 
 	/* Will be reset by the modeset helpers when re-enabling the crtc by
@@ -1207,8 +1189,6 @@ void drm_crtc_vblank_reset(struct drm_crtc *crtc)
 		vblank->inmodeset = 1;
 	}
 	spin_unlock_irqrestore(&dev->vbl_lock, irqflags);
-
-	WARN_ON(!list_empty(&dev->vblank_event_list));
 }
 EXPORT_SYMBOL(drm_crtc_vblank_reset);
 
@@ -1475,7 +1455,7 @@ static int drm_queue_vblank_event(struct drm_device *dev, unsigned int pipe,
 	 * vblank disable, so no need for further locking.  The reference from
 	 * drm_vblank_get() protects against vblank disable from another source.
 	 */
-	if (!READ_ONCE(vblank->enabled)) {
+	if (!READ_ONCE(vblank->enabled) && !READ_ONCE(vblank->inmodeset)) {
 		ret = -EINVAL;
 		goto err_unlock;
 	}
@@ -1494,7 +1474,7 @@ static int drm_queue_vblank_event(struct drm_device *dev, unsigned int pipe,
 	trace_drm_vblank_event_queued(file_priv, pipe, req_seq);
 
 	e->sequence = req_seq;
-	if (vblank_passed(seq, req_seq)) {
+	if (READ_ONCE(vblank->enabled) && vblank_passed(seq, req_seq)) {
 		drm_vblank_put(dev, pipe);
 		send_vblank_event(dev, e, seq, now);
 		vblwait->reply.sequence = seq;
@@ -1626,8 +1606,13 @@ int drm_wait_vblank_ioctl(struct drm_device *dev, void *data,
 
 	ret = drm_vblank_get(dev, pipe);
 	if (ret) {
-		DRM_DEBUG("crtc %d failed to acquire vblank counter, %d\n", pipe, ret);
-		return ret;
+		if ((flags & _DRM_VBLANK_EVENT) && READ_ONCE(vblank->inmodeset)) {
+			atomic_inc(&vblank->refcount);
+			ret = 0;
+		} else {
+			DRM_DEBUG("crtc %d failed to acquire vblank counter, %d\n", pipe, ret);
+			return ret;
+		}
 	}
 	seq = drm_vblank_count(dev, pipe);
 

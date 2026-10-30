@@ -191,6 +191,7 @@ static int _sde_fence_create_fd(void *fence_ctx, uint32_t val)
 	struct sync_file *sync_file;
 	signed int fd = -EINVAL;
 	struct sde_fence_context *ctx = fence_ctx;
+	unsigned long flags;
 
 	if (!ctx) {
 		SDE_ERROR("invalid context\n");
@@ -231,8 +232,16 @@ static int _sde_fence_create_fd(void *fence_ctx, uint32_t val)
 	sde_fence->fd = fd;
 
 	spin_lock(&ctx->list_lock);
-	list_add_tail(&sde_fence->fence_list, &ctx->fence_list_head);
-	spin_unlock(&ctx->list_lock);
+	spin_lock_irqsave(&ctx->lock, flags);
+	if (dma_fence_is_signaled_locked(&sde_fence->base)) {
+		spin_unlock_irqrestore(&ctx->lock, flags);
+		spin_unlock(&ctx->list_lock);
+		dma_fence_put(&sde_fence->base);
+	} else {
+		spin_unlock_irqrestore(&ctx->lock, flags);
+		list_add_tail(&sde_fence->fence_list, &ctx->fence_list_head);
+		spin_unlock(&ctx->list_lock);
+	}
 
 exit:
 	return fd;

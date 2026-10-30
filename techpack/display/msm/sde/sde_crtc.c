@@ -2224,6 +2224,8 @@ void sde_crtc_prepare_commit(struct drm_crtc *crtc,
 		if (conn->state && conn->state->crtc == crtc &&
 				cstate->num_connectors < MAX_CONNECTORS) {
 			encoder = conn->state->best_encoder;
+			if (!encoder)
+				encoder = to_sde_connector(conn)->encoder;
 			if (encoder)
 				sde_encoder_register_frame_event_callback(
 						encoder,
@@ -2281,6 +2283,32 @@ end:
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
 
+static inline bool _sde_crtc_encoder_matches(struct drm_crtc *crtc, struct drm_encoder *enc)
+{
+	if (!crtc || !enc)
+		return false;
+
+	if (enc->crtc == crtc) {
+		if (crtc->state)
+			crtc->state->encoder_mask |= (1 << drm_encoder_index(enc));
+		return true;
+	}
+
+	if (crtc->state && (crtc->state->encoder_mask & (1 << drm_encoder_index(enc)))) {
+		enc->crtc = crtc;
+		return true;
+	}
+
+	if (drm_crtc_index(crtc) == 0 && enc->encoder_type == DRM_MODE_ENCODER_DSI) {
+		enc->crtc = crtc;
+		if (crtc->state)
+			crtc->state->encoder_mask |= (1 << drm_encoder_index(enc));
+		return true;
+	}
+
+	return false;
+}
+
 enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 		struct drm_crtc_state *cstate)
 {
@@ -2291,8 +2319,10 @@ enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 		return INTF_MODE_NONE;
 	}
 
-	drm_for_each_encoder_mask(encoder, crtc->dev,
-			cstate->encoder_mask) {
+	list_for_each_entry(encoder, &crtc->dev->mode_config.encoder_list,
+			head) {
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
+			continue;
 		/* continue if copy encoder is encountered */
 		if (sde_encoder_in_clone_mode(encoder))
 			continue;
@@ -2301,27 +2331,6 @@ enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 	}
 
 	return INTF_MODE_NONE;
-}
-
-static inline bool _sde_crtc_encoder_matches(struct drm_crtc *crtc, struct drm_encoder *enc)
-{
-	if (!crtc || !enc)
-		return false;
-
-	if (enc->crtc == crtc)
-		return true;
-
-	if (crtc->state && (crtc->state->encoder_mask & (1 << drm_encoder_index(enc)))) {
-		enc->crtc = crtc;
-		return true;
-	}
-
-	if (drm_crtc_index(crtc) == 0 && enc->encoder_type == DRM_MODE_ENCODER_DSI) {
-		enc->crtc = crtc;
-		return true;
-	}
-
-	return false;
 }
 
 u32 sde_crtc_get_fps_mode(struct drm_crtc *crtc)
@@ -3788,8 +3797,10 @@ static int _sde_crtc_vblank_enable_no_lock(
 		if (ret < 0)
 			return ret;
 
-		drm_for_each_encoder_mask(enc, crtc->dev,
-			crtc->state->encoder_mask) {
+		list_for_each_entry(enc, &crtc->dev->mode_config.encoder_list,
+				head) {
+			if (!_sde_crtc_encoder_matches(crtc, enc))
+				continue;
 			SDE_EVT32(DRMID(&sde_crtc->base), DRMID(enc), enable,
 					sde_crtc->enabled);
 
@@ -3797,8 +3808,10 @@ static int _sde_crtc_vblank_enable_no_lock(
 					sde_crtc_vblank_cb, (void *)crtc);
 		}
 	} else {
-		drm_for_each_encoder_mask(enc, crtc->dev,
-			crtc->state->encoder_mask) {
+		list_for_each_entry(enc, &crtc->dev->mode_config.encoder_list,
+				head) {
+			if (!_sde_crtc_encoder_matches(crtc, enc))
+				continue;
 			SDE_EVT32(DRMID(&sde_crtc->base), DRMID(enc), enable,
 					sde_crtc->enabled);
 
@@ -3939,8 +3952,10 @@ static void sde_crtc_handle_power_event(u32 event_type, void *arg)
 		}
 
 		/* restore encoder; crtc will be programmed during commit */
-		drm_for_each_encoder_mask(encoder, crtc->dev,
-				crtc->state->encoder_mask) {
+		list_for_each_entry(encoder,
+				&crtc->dev->mode_config.encoder_list, head) {
+			if (!_sde_crtc_encoder_matches(crtc, encoder))
+				continue;
 			sde_encoder_virt_restore(encoder);
 		}
 
@@ -3972,8 +3987,10 @@ static void sde_crtc_handle_power_event(u32 event_type, void *arg)
 				SDE_ERROR("enable LUT memory retention err %d\n", ret);
 		}
 
-		drm_for_each_encoder_mask(encoder, crtc->dev,
-				crtc->state->encoder_mask) {
+		list_for_each_entry(encoder,
+				&crtc->dev->mode_config.encoder_list, head) {
+			if (!_sde_crtc_encoder_matches(crtc, encoder))
+				continue;
 			/*
 			 * disable the vsync source after updating the
 			 * rsc state. rsc state update might have vsync wait
@@ -4113,8 +4130,10 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 	}
 	spin_unlock_irqrestore(&sde_crtc->spin_lock, flags);
 
-	drm_for_each_encoder_mask(encoder, crtc->dev,
-			crtc->state->encoder_mask) {
+	list_for_each_entry(encoder, &crtc->dev->mode_config.encoder_list,
+			head) {
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
+			continue;
 		if (sde_encoder_in_cont_splash(encoder)) {
 			in_cont_splash = true;
 			break;
@@ -4125,8 +4144,10 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 	if (!in_cont_splash)
 		sde_core_perf_crtc_update(crtc, 0, true);
 
-	drm_for_each_encoder_mask(encoder, crtc->dev,
-			crtc->state->encoder_mask) {
+	list_for_each_entry(encoder, &crtc->dev->mode_config.encoder_list,
+			head) {
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
+			continue;
 		sde_encoder_register_frame_event_callback(encoder, NULL, NULL);
 		cstate->rsc_client = NULL;
 		cstate->rsc_update = false;
@@ -4227,10 +4248,15 @@ static void sde_crtc_enable(struct drm_crtc *crtc,
 		return;
 	}
 
-	drm_for_each_encoder_mask(encoder, crtc->dev,
-			crtc->state->encoder_mask) {
+	list_for_each_entry(encoder, &crtc->dev->mode_config.encoder_list,
+			head) {
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
+			continue;
 		sde_encoder_register_frame_event_callback(encoder,
 				sde_crtc_frame_event_cb, crtc);
+		if (READ_ONCE(crtc->dev->vblank[drm_crtc_index(crtc)].enabled))
+			sde_encoder_register_vblank_callback(encoder,
+					sde_crtc_vblank_cb, (void *)crtc);
 	}
 
 	sde_crtc->enabled = true;
@@ -5335,7 +5361,10 @@ static int _sde_crtc_get_output_fence(struct drm_crtc *crtc,
 	sde_crtc = to_sde_crtc(crtc);
 	cstate = to_sde_crtc_state(state);
 
-	drm_for_each_encoder_mask(encoder, crtc->dev, state->encoder_mask) {
+	list_for_each_entry(encoder, &crtc->dev->mode_config.encoder_list,
+			head) {
+		if (!_sde_crtc_encoder_matches(crtc, encoder))
+			continue;
 		if (sde_encoder_check_curr_mode(encoder,
 						MSM_DISPLAY_VIDEO_MODE))
 			is_vid = true;
@@ -5353,13 +5382,6 @@ static int _sde_crtc_get_output_fence(struct drm_crtc *crtc,
 	 */
 	if (is_vid)
 		offset++;
-
-	/*
-	 * Hwcomposer now queries the fences using the commit list in atomic
-	 * commit ioctl. The offset should be set to next timeline
-	 * which will be incremented during the prepare commit phase
-	 */
-	offset++;
 
 	return sde_fence_create(sde_crtc->output_fence, val, offset);
 }
