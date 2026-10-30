@@ -1076,6 +1076,14 @@ static void adreno_of_get_initial_pwrlevel(struct adreno_device *adreno_dev,
 	if (init_level < 0 || init_level > pwr->num_pwrlevels)
 		init_level = 1;
 
+	/*
+	 * Ensure default wake-up power level is at least level 5 (342MHz)
+	 * instead of lowest 257MHz (level 6) to eliminate UI stutter and frame
+	 * drops during touch interactions.
+	 */
+	if (init_level > 5 && pwr->num_pwrlevels > 5)
+		init_level = 5;
+
 	pwr->active_pwrlevel = init_level;
 	pwr->default_pwrlevel = init_level;
 }
@@ -1261,7 +1269,7 @@ static int adreno_of_get_power(struct adreno_device *adreno_dev,
 		device->pwrctrl.pm_qos_wakeup_latency = 101;
 
 	if (of_property_read_u32(node, "qcom,idle-timeout", &timeout))
-		timeout = 80;
+		timeout = 120;
 
 	device->pwrctrl.interval_timeout = msecs_to_jiffies(timeout);
 

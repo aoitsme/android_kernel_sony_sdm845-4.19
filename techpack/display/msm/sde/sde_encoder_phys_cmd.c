@@ -1078,15 +1078,22 @@ static void sde_encoder_phys_cmd_tearcheck_config(
 	 * During continuous splash, panel TE has not been started yet by DCS on
 	 * commands, so configure internal counter to wrap at vtotal and start at 0
 	 * to generate autonomous 60Hz RD_PTR VSYNC interrupts for SurfaceFlinger.
-	 * Once splash handover is complete, set sync_cfg_height to 0xFFF0 so the
-	 * external panel TE pulses phase-align and drive tearcheck at 60Hz without
-	 * duplicate internal counter collisions.
+	 * Once splash handover is complete, set sync_cfg_height to mode->vdisplay +
+	 * (mode->vtotal * 2). In normal 60Hz operation, external physical TE arrives
+	 * every 16.6ms (mode->vtotal lines), resetting the counter to vsync_init_val
+	 * (mode->vdisplay) when it reaches vdisplay + vtotal (4595 lines).
+	 * This provides a full 16.6ms safety margin before the 7030 lines mark,
+	 * completely preventing duplicate interrupt collisions.
+	 * If an external TE pulse is missed or delayed, the counter autonomously
+	 * wraps around at ~33.3ms, generating recovery VSYNC at ~48ms. Because
+	 * 48ms is far below KICKOFF_TIMEOUT_MS (333ms), kickoff timeouts and
+	 * permanent display freezes are eliminated.
 	 */
 	if (phys_enc->cont_splash_enabled) {
 		tc_cfg.sync_cfg_height = mode->vtotal;
 		tc_cfg.vsync_init_val = 0;
 	} else {
-		tc_cfg.sync_cfg_height = 0xFFF0;
+		tc_cfg.sync_cfg_height = mode->vdisplay + (mode->vtotal * 2);
 		tc_cfg.vsync_init_val = mode->vdisplay;
 	}
 	tc_cfg.sync_threshold_start = _get_tearcheck_threshold(phys_enc,
