@@ -28,6 +28,7 @@
 #include <linux/hrtimer.h>
 #include <linux/of.h>
 #include "governor.h"
+#include "../base/base.h"
 
 #define MAX(a,b)	((a > b) ? a : b)
 #define MIN(a,b)	((a < b) ? a : b)
@@ -671,20 +672,21 @@ struct devfreq *devfreq_add_device(struct device *dev,
 		goto err_out;
 	}
 
-	if (devfreq->dev.kobj.parent) {
+	if (devfreq_class && devfreq_class->p) {
+		struct kobject *class_kobj = &devfreq_class->p->subsys.kobj;
 		const char *dname = dev_name(dev);
 
 		if (!strcmp(dname, "soc:qcom,cpu-llcc-ddr-bw"))
-			sysfs_create_link(devfreq->dev.kobj.parent,
+			sysfs_create_link(class_kobj,
 					  &devfreq->dev.kobj, "soc:qcom,cpubw");
 		else if (!strcmp(dname, "soc:qcom,cpu-cpu-llcc-bw"))
-			sysfs_create_link(devfreq->dev.kobj.parent,
+			sysfs_create_link(class_kobj,
 					  &devfreq->dev.kobj, "soc:qcom,llccbw");
 		else if (!strcmp(dname, "soc:qcom,cpu0-cpu-l3-lat"))
-			sysfs_create_link(devfreq->dev.kobj.parent,
+			sysfs_create_link(class_kobj,
 					  &devfreq->dev.kobj, "soc:qcom,l3-cpu0");
 		else if (!strcmp(dname, "soc:qcom,cpu4-cpu-l3-lat"))
-			sysfs_create_link(devfreq->dev.kobj.parent,
+			sysfs_create_link(class_kobj,
 					  &devfreq->dev.kobj, "soc:qcom,l3-cpu4");
 	}
 
