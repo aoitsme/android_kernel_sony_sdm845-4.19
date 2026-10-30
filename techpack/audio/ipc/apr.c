@@ -303,17 +303,25 @@ static void apr_add_child_devices(struct work_struct *work)
 			__func__, ret);
 }
 
-static void apr_adsp_up(void)
+void apr_adsp_up(void)
 {
+	if (!apr_priv) {
+		pr_info("%s: apr_priv not initialized yet, skipping\n", __func__);
+		return;
+	}
+
 	pr_info("%s: Q6 is Up\n", __func__);
 	apr_set_q6_state(APR_SUBSYS_LOADED);
 
 	spin_lock(&apr_priv->apr_lock);
-	if (apr_priv->is_initial_boot)
+	if (apr_priv->is_initial_boot) {
+		apr_priv->is_initial_boot = false;
 		schedule_work(&apr_priv->add_chld_dev_work);
+	}
 	spin_unlock(&apr_priv->apr_lock);
 	snd_event_notify(apr_priv->dev, SND_EVENT_UP);
 }
+EXPORT_SYMBOL(apr_adsp_up);
 
 int apr_load_adsp_image(void)
 {
@@ -1205,6 +1213,12 @@ static int apr_probe(struct platform_device *pdev)
 	}
 
 	apr_tal_init();
+
+	if (apr_tal_is_adsp_connected()) {
+		pr_info("%s: ADSP apr_audio_svc channel already connected, calling apr_adsp_up\n",
+			__func__);
+		apr_adsp_up();
+	}
 
 	ret = snd_event_client_register(&pdev->dev, &apr_ssr_ops, NULL);
 	if (ret) {

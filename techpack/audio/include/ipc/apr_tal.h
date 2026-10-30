@@ -69,6 +69,7 @@ int apr_tal_init(void);
 void apr_tal_exit(void);
 int apr_tal_start_rx_rt(struct apr_svc_ch_dev *apr_ch);
 int apr_tal_end_rx_rt(struct apr_svc_ch_dev *apr_ch);
+bool apr_tal_is_adsp_connected(void);
 
 struct apr_svc_ch_dev {
 	void               *handle;
