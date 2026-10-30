@@ -243,8 +243,9 @@ int dsi_panel_driver_touch_reset(struct dsi_panel *panel)
 		return 0;
 
 	if (spec_pdata->count_touch) {
-		/* Guarantee an active-low reset pulse for touch */
-		if (spec_pdata->sequence_touch[0].level == 1) {
+		/* Guarantee an active-low reset pulse for touch if left high */
+		if (spec_pdata->sequence_touch[0].level == 1 &&
+		    gpio_get_value(spec_pdata->reset_touch_gpio) > 0) {
 			gpio_direction_output(spec_pdata->reset_touch_gpio, 0);
 			usleep_range(10000, 11000);
 		}
@@ -317,8 +318,9 @@ int dsi_panel_driver_reset_panel(struct dsi_panel *panel, bool en)
 	if (en) {
 		seq = &spec_pdata->on_seq;
 
-		/* Guarantee an active-low reset pulse on cold boot / enable */
-		if (seq->count && seq->seq[0].level == 1) {
+		/* Guarantee an active-low reset pulse on cold boot if left high */
+		if (seq->count && seq->seq[0].level == 1 &&
+		    gpio_get_value(r_config->reset_gpio) > 0) {
 			gpio_direction_output(r_config->reset_gpio, 0);
 			usleep_range(10000, 11000);
 		}

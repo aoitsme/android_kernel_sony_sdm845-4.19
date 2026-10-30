@@ -2992,8 +2992,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 
 	sde_crtc_set_compression_ratio(sde_enc->mode_info, sde_enc->crtc);
 
-	modeset_lock = REQ_SEAMLESS_MODESET_LOCK(adj_mode,
-					is_cmd_mode);
+	modeset_lock = true;
 	if (modeset_lock)
 		mutex_lock(&sde_crtc->vblank_modeset_ctrl_lock);
 	/* release resources before seamless mode change */
@@ -3019,6 +3018,9 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 		_sde_encoder_modeset_helper_locked(drm_enc,
 					SDE_ENC_RC_EVENT_PRE_MODESET);
 		sde_encoder_virt_mode_switch(drm_enc, intf_mode, adj_mode);
+	} else {
+		_sde_encoder_modeset_helper_locked(drm_enc,
+					SDE_ENC_RC_EVENT_PRE_MODESET);
 	}
 
 	/* Reserve dynamic resources now. Indicating non-AtomicTest phase */
@@ -3098,7 +3100,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 			is_cmd_mode))
 		sde_encoder_resource_control(&sde_enc->base,
 						SDE_ENC_RC_EVENT_POST_MODESET);
-	else if (msm_is_mode_seamless_poms(adj_mode))
+	else
 		_sde_encoder_modeset_helper_locked(drm_enc,
 						SDE_ENC_RC_EVENT_POST_MODESET);
 exit:
@@ -3799,6 +3801,9 @@ void sde_encoder_register_vblank_callback(struct drm_encoder *drm_enc,
 	sde_enc->crtc_vblank_cb = vbl_cb;
 	sde_enc->crtc_vblank_cb_data = vbl_data;
 	spin_unlock_irqrestore(&sde_enc->enc_spinlock, lock_flags);
+
+	if (sde_enc->vblank_enabled == enable)
+		return;
 
 	for (i = 0; i < sde_enc->num_phys_encs; i++) {
 		struct sde_encoder_phys *phys = sde_enc->phys_encs[i];
@@ -4949,13 +4954,10 @@ int sde_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc,
 	is_cmd_mode = sde_encoder_check_curr_mode(drm_enc,
 				MSM_DISPLAY_CMD_MODE);
 	if (sde_enc->cur_master && sde_enc->cur_master->connector
-			&& is_cmd_mode) {
+			&& is_cmd_mode)
 		sde_enc->frame_trigger_mode = sde_connector_get_property(
 			sde_enc->cur_master->connector->state,
 			CONNECTOR_PROP_CMD_FRAME_TRIGGER_MODE);
-		if (sde_enc->frame_trigger_mode == FRAME_DONE_WAIT_DEFAULT)
-			sde_enc->frame_trigger_mode = FRAME_DONE_WAIT_POSTED_START;
-	}
 
 	_sde_encoder_helper_hdr_plus_mempool_update(sde_enc);
 

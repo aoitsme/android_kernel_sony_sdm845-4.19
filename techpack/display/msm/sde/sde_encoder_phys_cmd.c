@@ -841,10 +841,12 @@ static int sde_encoder_phys_cmd_control_vblank_irq(
 	int refcount;
 	struct sde_kms *sde_kms;
 
-	if (!phys_enc || !phys_enc->hw_pp) {
+	if (!phys_enc) {
 		SDE_ERROR("invalid encoder\n");
 		return -EINVAL;
 	}
+	if (!phys_enc->hw_pp)
+		return 0;
 	sde_kms = phys_enc->sde_kms;
 
 	mutex_lock(&sde_kms->vblank_ctl_global_lock);
@@ -1679,7 +1681,7 @@ static int sde_encoder_phys_cmd_wait_for_commit_done(
 
 	/* wait for posted start or serialize trigger */
 	pending_cnt = atomic_read(&phys_enc->pending_kickoff_cnt);
-	if ((pending_cnt > 1) ||
+	if ((pending_cnt > 1) || (pending_cnt && (scheduler_status & BIT(0))) ||
 	    (!rc && phys_enc->frame_trigger_mode == FRAME_DONE_WAIT_SERIALIZE))
 		goto wait_for_idle;
 

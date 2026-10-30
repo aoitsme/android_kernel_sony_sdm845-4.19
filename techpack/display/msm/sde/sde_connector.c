@@ -912,8 +912,6 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 	if (c_conn->bl_device) {
 		c_conn->bl_device->props.power = FB_BLANK_UNBLANK;
 		c_conn->bl_device->props.state &= ~BL_CORE_FBBLANK;
-		if (c_conn->bl_device->props.brightness == 0)
-			c_conn->bl_device->props.brightness = 1024;
 		backlight_update_status(c_conn->bl_device);
 	}
 	c_conn->panel_dead = false;
@@ -1422,7 +1420,7 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 			 * commit completion
 			 */
 			rc = sde_fence_create(c_conn->retire_fence,
-						&fence_user_fd, 1);
+						&fence_user_fd, 0);
 			if (rc) {
 				SDE_ERROR("fence create failed rc:%d\n", rc);
 				goto end;

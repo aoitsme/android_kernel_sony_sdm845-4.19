@@ -7951,13 +7951,9 @@ int dsi_display_post_enable(struct dsi_display *display)
 
 	mutex_unlock(&display->display_lock);
 
-	if (!display->panel->bl_config.bl_level) {
-		u32 def_bl = 1024;
-		(void)dsi_display_set_backlight(display->drm_conn, display, def_bl);
-	} else {
+	if (display->panel->bl_config.bl_level)
 		(void)dsi_display_set_backlight(display->drm_conn, display,
 				display->panel->bl_config.bl_level);
-	}
 
 	return rc;
 }

@@ -2431,6 +2431,47 @@ int drm_atomic_set_property(struct drm_atomic_state *state,
 	return ret;
 }
 
+int drm_atomic_obj_set_property(struct drm_mode_object *obj,
+				struct drm_property *prop,
+				uint64_t prop_value)
+{
+	struct drm_mode_object *ref;
+	int ret;
+
+	if (!drm_property_change_valid_get(prop, prop_value, &ref))
+		return -EINVAL;
+
+	switch (obj->type) {
+	case DRM_MODE_OBJECT_CONNECTOR: {
+		struct drm_connector *connector = obj_to_connector(obj);
+
+		ret = drm_atomic_connector_set_property(connector,
+				connector->state, prop, prop_value);
+		break;
+	}
+	case DRM_MODE_OBJECT_CRTC: {
+		struct drm_crtc *crtc = obj_to_crtc(obj);
+
+		ret = drm_atomic_crtc_set_property(crtc,
+				crtc->state, prop, prop_value);
+		break;
+	}
+	case DRM_MODE_OBJECT_PLANE: {
+		struct drm_plane *plane = obj_to_plane(obj);
+
+		ret = drm_atomic_plane_set_property(plane,
+				plane->state, prop, prop_value);
+		break;
+	}
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	drm_property_change_valid_put(prop, ref);
+	return ret;
+}
+
 /**
  * DOC: explicit fencing properties
  *
