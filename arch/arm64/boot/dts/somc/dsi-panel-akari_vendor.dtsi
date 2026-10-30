@@ -125,7 +125,7 @@
 						05 01 00 00 00 00 01 34
 						05 01 00 00 50 00 01 10];
 				qcom,mdss-dsi-on-command-state = "dsi_lp_mode";
-				qcom,mdss-dsi-off-command-state = "dsi_hs_mode";
+				qcom,mdss-dsi-off-command-state = "dsi_lp_mode";
 				qcom,mdss-dsi-panel-timings = [00 21 08 08 25 23 08 08 06 03 04 00];
 
 				qcom,mdss-dsi-panel-clockrate = <964260000>;
@@ -265,7 +265,7 @@
 						05 01 00 00 00 00 01 28
 						05 01 00 00 55 00 01 10];
 				qcom,mdss-dsi-on-command-state = "dsi_lp_mode";
-				qcom,mdss-dsi-off-command-state = "dsi_hs_mode";
+				qcom,mdss-dsi-off-command-state = "dsi_lp_mode";
 				qcom,mdss-dsi-panel-timings = [00 21 08 08 25 23 08 08 06 03 04 00];
 
 				qcom,mdss-dsi-panel-clockrate = <964260000>;

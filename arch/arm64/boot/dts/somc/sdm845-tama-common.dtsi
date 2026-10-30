@@ -413,22 +413,6 @@
 		qcom,bark-time = <60000>;
 	};
 
-	sound-tavil {
-		qcom,msm-mbhc-usbc-audio-supported = <1>;
-		qcom,audio-routing =
-			"AIF4 VI", "MCLK",
-			"RX_BIAS", "MCLK",
-			"MADINPUT", "MCLK",
-			"AMIC2", "MIC BIAS2",
-			"MIC BIAS2", "Headset Mic",
-			"DMIC0", "MIC BIAS1",
-			"MIC BIAS1", "Digital Mic0",
-			"DMIC3", "MIC BIAS4",
-			"MIC BIAS4", "Digital Mic3",
-			"SpkrLeft IN", "SPK1 OUT",
-			"SpkrRight IN", "SPK2 OUT";
-	};
-
 	/delete-node/ qcom,qbt1000;
 
 	fpc1145 {
@@ -619,6 +603,22 @@
 			};
 		};
 	};
+};
+
+&snd_934x {
+	qcom,msm-mbhc-usbc-audio-supported = <1>;
+	qcom,audio-routing =
+		"AIF4 VI", "MCLK",
+		"RX_BIAS", "MCLK",
+		"MADINPUT", "MCLK",
+		"AMIC2", "MIC BIAS2",
+		"MIC BIAS2", "Headset Mic",
+		"DMIC0", "MIC BIAS1",
+		"MIC BIAS1", "Digital Mic0",
+		"DMIC3", "MIC BIAS4",
+		"MIC BIAS4", "Digital Mic3",
+		"SpkrLeft IN", "SPK1 OUT",
+		"SpkrRight IN", "SPK2 OUT";
 };
 
 &led_flash_rear {

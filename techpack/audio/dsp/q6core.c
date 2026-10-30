@@ -2030,18 +2030,17 @@ static int q6core_probe(struct platform_device *pdev)
 	int32_t avs_state = 0;
 	int rc = 0;
 
-	rc = q6core_is_avs_up(&avs_state);
-	if (rc < 0)
-		goto err;
-	q6core_lcl.avs_state = avs_state;
 	rc = of_platform_populate(pdev->dev.of_node, NULL, NULL, &pdev->dev);
 	if (rc) {
 		dev_err(&pdev->dev, "%s: failed to add child nodes, rc=%d\n",
 			__func__, rc);
-		rc = -EINVAL;
-		goto err;
+		return -EINVAL;
 	}
 	dev_dbg(&pdev->dev, "%s: added child node\n", __func__);
+
+	rc = q6core_is_avs_up(&avs_state);
+	if (!rc)
+		q6core_lcl.avs_state = avs_state;
 
 	rc = snd_event_client_register(&pdev->dev, &q6core_ssr_ops, NULL);
 	if (!rc) {
@@ -2053,8 +2052,7 @@ static int q6core_probe(struct platform_device *pdev)
 		rc = 0;
 	}
 
-err:
-	return rc;
+	return 0;
 }
 
 static int q6core_remove(struct platform_device *pdev)
