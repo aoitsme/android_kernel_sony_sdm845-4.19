@@ -965,7 +965,7 @@ static int sde_encoder_phys_vid_prepare_for_kickoff(
 					DRM_EVENT_SDE_HW_RECOVERY,
 					sizeof(uint8_t), event);
 		} else {
-			SDE_DBG_DUMP("panic");
+			SDE_DBG_DUMP();
 		}
 
 		/* request a ctl reset before the next flush */
