@@ -575,9 +575,7 @@ static ssize_t spi_prepare_store(struct device *dev,
 	else
 		return -EINVAL;
 
-	mutex_lock(&fpc1145->lock);
 	rc = device_prepare(fpc1145, enable);
-	mutex_unlock(&fpc1145->lock);
 
 	return rc ? rc : count;
 }
