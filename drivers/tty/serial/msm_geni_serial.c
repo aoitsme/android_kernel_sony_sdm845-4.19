@@ -561,20 +561,29 @@ static int vote_clock_off(struct uart_port *uport)
 	return 0;
 };
 
+#ifndef TIOCPMGET_OLD
+#define TIOCPMGET_OLD	0x5441
+#define TIOCPMPUT_OLD	0x5442
+#define TIOCPMACT_OLD	0x5443
+#endif
+
 static int msm_geni_serial_ioctl(struct uart_port *uport, unsigned int cmd,
 						unsigned long arg)
 {
 	int ret = -ENOIOCTLCMD;
 
 	switch (cmd) {
+	case TIOCPMGET_OLD:
 	case TIOCPMGET: {
 		ret = vote_clock_on(uport);
 		break;
 	}
+	case TIOCPMPUT_OLD:
 	case TIOCPMPUT: {
 		ret = vote_clock_off(uport);
 		break;
 	}
+	case TIOCPMACT_OLD:
 	case TIOCPMACT: {
 		ret = !pm_runtime_status_suspended(uport->dev);
 		break;
