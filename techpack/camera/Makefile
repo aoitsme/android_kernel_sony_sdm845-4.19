@@ -19,6 +19,7 @@ LINUXINCLUDE    += \
 		-include $(srctree)/techpack/camera/config/litocameraconf.h
 endif
 
+ifneq ($(CONFIG_ARCH_SDM845), y)
 ifdef CONFIG_SPECTRA_CAMERA_KONA
 # Use USERINCLUDE when you must reference the UAPI directories only.
 USERINCLUDE     += \
@@ -30,4 +31,5 @@ LINUXINCLUDE    += \
                 -I$(srctree)/techpack/camera/include/uapi \
                 -I$(srctree)/techpack/camera/include
 obj-y += drivers/
+endif
 endif
