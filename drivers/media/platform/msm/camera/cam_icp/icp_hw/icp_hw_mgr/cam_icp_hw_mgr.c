@@ -4843,7 +4843,6 @@ static int cam_icp_mgr_acquire_hw(void *hw_mgr_priv, void *acquire_hw_args)
 	struct cam_icp_hw_ctx_data *ctx_data = NULL;
 	struct cam_hw_acquire_args *args = acquire_hw_args;
 	struct cam_icp_acquire_dev_info *icp_dev_acquire_info;
-	struct cam_cmd_mem_regions cmd_mem_region;
 
 	if ((!hw_mgr_priv) || (!acquire_hw_args)) {
 		CAM_ERR(CAM_ICP, "Invalid params: %pK %pK", hw_mgr_priv,
@@ -4929,36 +4928,12 @@ static int cam_icp_mgr_acquire_hw(void *hw_mgr_priv, void *acquire_hw_args)
 		goto create_handle_failed;
 	}
 
-	cmd_mem_region.num_regions = 1;
-	cmd_mem_region.map_info_array[0].mem_handle =
-		icp_dev_acquire_info->io_config_cmd_handle;
-	cmd_mem_region.map_info_array[0].offset = 0;
-	cmd_mem_region.map_info_array[0].size =
-		icp_dev_acquire_info->io_config_cmd_size;
-	cmd_mem_region.map_info_array[0].flags = 0;
-
-	rc = cam_icp_process_stream_settings(ctx_data,
-		&cmd_mem_region, true);
-	if (rc) {
-		CAM_ERR(CAM_ICP,
-			"sending config io mapping failed rc %d", rc);
-		goto send_map_info_failed;
-	}
-
 	rc = cam_icp_mgr_send_config_io(ctx_data, io_buf_addr);
 	if (rc) {
 		CAM_ERR(CAM_ICP, "IO Config command failed %d", rc);
 		cam_icp_dump_io_cfg(ctx_data,
 			icp_dev_acquire_info->io_config_cmd_handle);
 		goto ioconfig_failed;
-	}
-
-	rc = cam_icp_process_stream_settings(ctx_data,
-		&cmd_mem_region, false);
-	if (rc) {
-		CAM_ERR(CAM_ICP,
-			"sending config io unmapping failed %d", rc);
-		goto send_map_info_failed;
 	}
 
 	ctx_data->context_priv = args->context_data;
@@ -5002,9 +4977,6 @@ copy_to_user_failed:
 	kfree(ctx_data->hfi_frame_process.bitmap);
 	ctx_data->hfi_frame_process.bitmap = NULL;
 ioconfig_failed:
-	cam_icp_process_stream_settings(ctx_data,
-		&cmd_mem_region, false);
-send_map_info_failed:
 	cam_icp_mgr_destroy_handle(ctx_data);
 create_handle_failed:
 send_ping_failed:
