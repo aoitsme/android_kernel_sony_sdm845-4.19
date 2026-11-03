@@ -83,5 +83,13 @@ obj-$(CONFIG_KINECTICS_XR_NORDIC) += kxrctrl/
 
 obj-y				 += pn553/
 obj-$(CONFIG_SONY_EXT_UIM_CTRL)  += sony_ext_uim_ctrl.o
+CFLAGS_sony_camera.o += -I$(srctree)/include/uapi/media \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_req_mgr/ \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_utils \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_cpas/include \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_sensor_module/cam_sensor_io \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_sensor_module/cam_sensor_utils \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_sensor_module/cam_cci \
+                        -I$(srctree)/drivers/media/platform/msm/camera/cam_smmu
 obj-$(CONFIG_SONY_CAMERA)        += sony_camera.o
 obj-$(CONFIG_POWERKEY_FORCECRASH)	+= powerkey_forcecrash.o
