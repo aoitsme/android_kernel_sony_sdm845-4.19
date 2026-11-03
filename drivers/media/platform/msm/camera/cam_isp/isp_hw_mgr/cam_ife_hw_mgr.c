@@ -5890,20 +5890,11 @@ static int cam_ife_hw_mgr_handle_buf_done_for_hw_res(
 			/*
 			 * It is an indication that bandwidth is not sufficient
 			 * to generate composite done irq within the VBI time.
+			 * Fall-through to SUCCESS so buffer fence is signaled and
+			 * ISP active_req_cnt can decrement without congestion stalling.
 			 */
-
-			error_resc_handle[num_of_error_handles++] =
-					isp_ife_out_res->res_id;
-
-			if (num_of_error_handles > 0) {
-				error_event_data.error_type =
-					CAM_ISP_HW_ERROR_BUSIF_OVERFLOW;
-				goto err;
-			}
-
-			break;
-		case CAM_VFE_IRQ_STATUS_ERR:
-			break;
+			CAM_INFO_RATE_LIMIT(CAM_ISP, "Composite overwrite detected on res_id %d (completing buf_done)",
+				isp_ife_out_res->res_id);
 		case CAM_VFE_IRQ_STATUS_SUCCESS:
 			buf_done_event_data.num_handles = 1;
 			buf_done_event_data.resource_handle[0] =
@@ -5924,8 +5915,10 @@ static int cam_ife_hw_mgr_handle_buf_done_for_hw_res(
 			}
 
 			break;
+		case CAM_VFE_IRQ_STATUS_ERR:
+			/* Do NOTHING: resource did not have an IRQ event on this interrupt */
+			break;
 		default:
-			/* Do NOTHING */
 			error_resc_handle[num_of_error_handles++] =
 				isp_ife_out_res->res_id;
 			if (num_of_error_handles > 0) {

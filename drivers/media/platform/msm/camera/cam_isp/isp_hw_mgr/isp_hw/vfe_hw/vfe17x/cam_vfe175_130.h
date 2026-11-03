@@ -82,7 +82,7 @@ static struct cam_vfe_camif_reg_data vfe_175_130_camif_reg_data = {
 	.reg_update_irq_mask             = 0x00000010,
 	.eof_irq_mask                    = 0x00000002,
 	.error_irq_mask0                 = 0x0003FC00,
-	.error_irq_mask1                 = 0xEFFF7E80,
+	.error_irq_mask1                 = 0xEFFF6680,
 	.enable_diagnostic_hw            = 0x1,
 };
 
@@ -128,7 +128,7 @@ static struct cam_vfe_fe_reg_data vfe_175_130_fe_reg_data = {
 	.reg_update_irq_mask             = 0x00000010,
 	.eof_irq_mask                    = 0x00000002,
 	.error_irq_mask0                 = 0x0003FC00,
-	.error_irq_mask1                 = 0xEFFF7E80,
+	.error_irq_mask1                 = 0xEFFF6680,
 	.enable_diagnostic_hw            = 0x1,
 	.fe_mux_data                  = 0x2,
 	.hbi_cnt_shift                   = 0x8,

@@ -43,7 +43,7 @@ static uint32_t camif_fe_irq_reg_mask[CAM_IFE_IRQ_REGISTERS_MAX] = {
 
 static uint32_t camif_irq_err_reg_mask[CAM_IFE_IRQ_REGISTERS_MAX] = {
 	0x0003FC00,
-	0xEFFF7EBC,
+	0xEFFF66BC,
 };
 
 static uint32_t top_reset_irq_reg_mask[CAM_IFE_IRQ_REGISTERS_MAX] = {
@@ -168,19 +168,14 @@ static int cam_vfe_irq_err_top_half(uint32_t    evt_id,
 	 *  need to handle overflow condition here, otherwise irq storm
 	 *  will block everything
 	 */
-	if (th_payload->evt_status_arr[1] ||
+	if ((th_payload->evt_status_arr[1] & camif_irq_err_reg_mask[1]) ||
 		(th_payload->evt_status_arr[0] & camif_irq_err_reg_mask[0])) {
 		CAM_ERR(CAM_ISP,
 			"Encountered Error: vfe:%d:  Irq_status0=0x%x Status1=0x%x",
 			handler_priv->core_index, th_payload->evt_status_arr[0],
 			th_payload->evt_status_arr[1]);
-		CAM_ERR(CAM_ISP,
-			"Stopping further IRQ processing from this HW index=%d",
-			handler_priv->core_index);
 		cam_irq_controller_disable_irq(core_info->vfe_irq_controller,
 			core_info->irq_err_handle);
-		cam_irq_controller_clear_and_mask(evt_id,
-			core_info->vfe_irq_controller);
 		error_flag = true;
 	}
 

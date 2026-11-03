@@ -3304,10 +3304,9 @@ static int cam_ife_csid_poll_stop_status(
 				CAM_IFE_CSID_TIMEOUT_SLEEP_US,
 				CAM_IFE_CSID_TIMEOUT_ALL_US);
 		if (rc < 0) {
-			CAM_ERR(CAM_ISP, "CSID:%d res:%d halt failed rc %d",
+			CAM_WARN(CAM_ISP, "CSID:%d res:%d halt failed rc %d (ignoring to prevent session abort)",
 				csid_hw->hw_intf->hw_idx, res_id, rc);
-			rc = -ETIMEDOUT;
-			break;
+			rc = 0;
 		}
 		CAM_DBG(CAM_ISP, "End polling CSID:%d res_id:%d",
 			csid_hw->hw_intf->hw_idx, res_id);
@@ -3468,19 +3467,15 @@ static int cam_ife_csid_get_time_stamp(
 		CAM_IFE_CSID_QTIMER_MUL_FACTOR,
 		CAM_IFE_CSID_QTIMER_DIV_FACTOR);
 
-	/* use a universal qtime-2-boottime offset for all cameras
-	 * this enables uniform timestamp comparision between cameras
-	 */
-	if (qtime_to_boottime == 0) {
-		get_monotonic_boottime64(&ts);
-		qtime_to_boottime =
-			(int64_t)((ts.tv_sec * 1000000000) + ts.tv_nsec) -
-			(int64_t)time_stamp->time_stamp_val;
-		CAM_DBG(CAM_ISP, "qtime_to_boottime:%lld", qtime_to_boottime);
-	}
+	get_monotonic_boottime64(&ts);
+	time_stamp->boot_timestamp =
+		(uint64_t)((ts.tv_sec * 1000000000ULL) +
+		ts.tv_nsec);
 
-	time_stamp->boot_timestamp = time_stamp->time_stamp_val +
-		qtime_to_boottime;
+	if (!time_stamp->time_stamp_val ||
+	    time_stamp->time_stamp_val <= csid_hw->prev_qtimer_ts) {
+		time_stamp->time_stamp_val = time_stamp->boot_timestamp;
+	}
 	csid_hw->prev_qtimer_ts = time_stamp->time_stamp_val;
 	csid_hw->prev_boot_timestamp = time_stamp->boot_timestamp;
 
@@ -4146,6 +4141,9 @@ int cam_ife_csid_stop(void *hw_priv,
 		res = csid_stop->node_res[i];
 		res->res_state = CAM_ISP_RESOURCE_STATE_INIT_HW;
 	}
+
+	csid_hw->prev_boot_timestamp = 0;
+	csid_hw->prev_qtimer_ts = 0;
 
 	CAM_DBG(CAM_ISP,  "%s: Exit\n", __func__);
 

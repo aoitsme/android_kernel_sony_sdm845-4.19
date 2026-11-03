@@ -64,7 +64,7 @@ static const char drv_name[] = "vfe_bus";
 	} while (0)
 
 static uint32_t bus_error_irq_mask[3] = {
-	0x7800,
+	0x3800,
 	0x0000,
 	0x0040,
 };
@@ -2110,14 +2110,6 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 			break;
 		}
 
-		comp_err_reg = cam_ife_irq_regs[CAM_IFE_IRQ_BUS_REG_COMP_OWRT];
-		/* Check for Regular composite Overwrite */
-		if ((status_reg & BIT(12)) &&
-			(comp_err_reg & rsrc_data->composite_mask)) {
-			rc = CAM_VFE_IRQ_STATUS_COMP_OWRT;
-			break;
-		}
-
 		/* Regular Composite SUCCESS */
 		if (status_reg & BIT(comp_grp_id + 5)) {
 			rsrc_data->irq_trigger_cnt++;
@@ -2128,6 +2120,15 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 				rsrc_data->irq_trigger_cnt = 0;
 			}
 			rc = CAM_VFE_IRQ_STATUS_SUCCESS;
+		}
+
+		comp_err_reg = cam_ife_irq_regs[CAM_IFE_IRQ_BUS_REG_COMP_OWRT];
+		/* Check for Regular composite Overwrite */
+		if (rc != CAM_VFE_IRQ_STATUS_SUCCESS &&
+			(status_reg & BIT(12)) &&
+			(comp_err_reg & rsrc_data->composite_mask)) {
+			rc = CAM_VFE_IRQ_STATUS_COMP_OWRT;
+			break;
 		}
 
 		CAM_DBG(CAM_ISP, "status reg = 0x%x, bit index = %d rc %d",
@@ -2154,14 +2155,6 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 			break;
 		}
 
-		/* Check for Dual composite Overwrite */
-		comp_err_reg = cam_ife_irq_regs[CAM_IFE_IRQ_BUS_DUAL_COMP_OWRT];
-		if ((status_reg & BIT(7)) &&
-			(comp_err_reg & rsrc_data->composite_mask)) {
-			rc = CAM_VFE_IRQ_STATUS_COMP_OWRT;
-			break;
-		}
-
 		/* DUAL Composite SUCCESS */
 		if (status_reg & BIT(comp_grp_id)) {
 			rsrc_data->irq_trigger_cnt++;
@@ -2172,6 +2165,15 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 				rsrc_data->irq_trigger_cnt = 0;
 			}
 			rc = CAM_VFE_IRQ_STATUS_SUCCESS;
+		}
+
+		/* Check for Dual composite Overwrite */
+		comp_err_reg = cam_ife_irq_regs[CAM_IFE_IRQ_BUS_DUAL_COMP_OWRT];
+		if (rc != CAM_VFE_IRQ_STATUS_SUCCESS &&
+			(status_reg & BIT(7)) &&
+			(comp_err_reg & rsrc_data->composite_mask)) {
+			rc = CAM_VFE_IRQ_STATUS_COMP_OWRT;
+			break;
 		}
 
 		break;

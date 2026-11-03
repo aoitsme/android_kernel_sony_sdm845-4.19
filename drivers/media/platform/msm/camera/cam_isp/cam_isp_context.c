@@ -598,10 +598,9 @@ static int __cam_isp_ctx_handle_buf_done_in_activated_state(
 		}
 
 		if (j == req_isp->num_fence_map_out) {
-			CAM_ERR(CAM_ISP,
-				"Can not find matching lane handle 0x%x!",
+			CAM_DBG(CAM_ISP,
+				"Can not find matching lane handle 0x%x (stats/unmapped)",
 				done->resource_handle[i]);
-			rc = -EINVAL;
 			continue;
 		}
 
