@@ -1981,10 +1981,34 @@ static ssize_t qpnp_flash_led_max_current_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", max_current);
 }
 
+/* sysfs show function for flash_fault_status */
+static ssize_t qpnp_flash_led_fault_status_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int rc;
+	u8 led_status1 = 0;
+	struct flash_switch_data *snode;
+	struct qpnp_flash_led *led;
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+
+	snode = container_of(led_cdev, struct flash_switch_data, cdev);
+	led = dev_get_drvdata(&snode->pdev->dev);
+
+	rc = qpnp_flash_led_read(led,
+			FLASH_LED_REG_LED_STATUS1(led->base), &led_status1);
+	if (rc < 0) {
+		pr_err("Failed to read led_status1 reg, rc=%d\n", rc);
+		return snprintf(buf, PAGE_SIZE, "0\n");
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", led_status1);
+}
+
 /* sysfs attributes exported by flash_led */
 static struct device_attribute qpnp_flash_led_attrs[] = {
 	__ATTR(max_current, 0664, qpnp_flash_led_max_current_show, NULL),
 	__ATTR(enable, 0664, NULL, qpnp_flash_led_prepare_store),
+	__ATTR(fault_status, 0664, qpnp_flash_led_fault_status_show, NULL),
 };
 
 /* irq handler */
