@@ -3,39 +3,37 @@
  * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  */
 
-/ {
-	reserved-memory {
-		#address-cells = <2>;
-		#size-cells = <2>;
+&reserved_memory {
+	#address-cells = <2>;
+	#size-cells = <2>;
 
-		debug_region: debug_region@ffb00000 {
-			compatible = "removed-dma-pool", "qcom,debug_memory";
-			no-map;
-			reg = <0 0xffb00000 0 0x100000>;
-			label = "debug_mem";
-		};
+	debug_region: debug_region@ffb00000 {
+		compatible = "removed-dma-pool", "qcom,debug_memory";
+		no-map;
+		reg = <0 0xffb00000 0 0x100000>;
+		label = "debug_mem";
+	};
 
-		ramoops: ramoops@ffc00000 {
-			compatible = "ramoops";
-			no-map;
-			reg = <0 0xffc00000 0 0x00100000>;
-			record-size = <0x10000>;
-			console-size = <0x60000>;
-			ftrace-size = <0x10000>;
-			pmsg-size = <0x20000>;
-			ecc-size = <16>;
-		};
+	ramoops: ramoops@ffc00000 {
+		compatible = "ramoops";
+		no-map;
+		reg = <0 0xffc00000 0 0x00100000>;
+		record-size = <0x10000>;
+		console-size = <0x60000>;
+		ftrace-size = <0x10000>;
+		pmsg-size = <0x20000>;
+		ecc-size = <16>;
+	};
 
-		qseecom_mem: qseecom_region@8ab00000 {
-			reg = <0 0x8ab00000 0 0x1900000>;
-		};
+	qseecom_mem: qseecom_region@8ab00000 {
+		reg = <0 0x8ab00000 0 0x1900000>;
+	};
 
-		/delete-node/ camera_region@8bf00000;
-		pil_camera_mem: camera_region@97c00000 {
-			compatible = "removed-dma-pool";
-			no-map;
-			reg = <0 0x97c00000 0 0x500000>;
-		};
+	/delete-node/ camera_region@8bf00000;
+	pil_camera_mem: camera_region@97c00000 {
+		compatible = "removed-dma-pool";
+		no-map;
+		reg = <0 0x97c00000 0 0x500000>;
 	};
 };
 
@@ -108,6 +106,79 @@
 };
 
 &soc {
+	restart-reason {
+		compatible = "qcom,restart-reason";
+
+		none {
+			cmd = "none";
+			reg-val = <0x00 0x00000000>;
+		};
+
+		unknown {
+			cmd = "unknown";
+			reg-val = <0x00 0x77665501>;
+		};
+
+		recovery {
+			cmd = "recovery";
+			reg-val = <0x02 0x77665502>;
+			reboot-cmd;
+		};
+
+		bootloader {
+			cmd = "bootloader";
+			reg-val = <0x03 0x77665500>;
+			reboot-cmd;
+		};
+
+		rtc {
+			cmd = "rtc";
+			reg-val = <0x04 0x77665503>;
+			reboot-cmd;
+		};
+
+		dm-verity-device-corrupted {
+			cmd = "dm-verity device corrupted";
+			reg-val = <0x05 0x77665508>;
+			reboot-cmd;
+		};
+
+		dm-verity-enforcing {
+			cmd = "dm-verity enforcing";
+			reg-val = <0x06 0x77665509>;
+			reboot-cmd;
+		};
+
+		keys-clear {
+			cmd = "keys clear";
+			reg-val = <0x07 0x7766550A>;
+			reboot-cmd;
+		};
+
+		panic {
+			cmd = "panic";
+			reg-val = <0x40 0xC0DEDEAD>;
+		};
+
+		oem-N {
+			cmd = "oem-4E";
+			reg-val = <0x61 0x6F656D4E>;
+			reboot-cmd;
+		};
+
+		oem-S {
+			cmd = "oem-53";
+			reg-val = <0x60 0x6F656D53>;
+			reboot-cmd;
+		};
+
+		oem-P {
+			cmd = "oem-50";
+			reg-val = <0x51 0x6F656D50>;
+			reboot-cmd;
+		};
+	};
+
 	qcom,pcie@1c00000 {
 		status = "disabled";
 	};
