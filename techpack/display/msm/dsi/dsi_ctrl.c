@@ -263,13 +263,6 @@ static int dsi_ctrl_debugfs_deinit(struct dsi_ctrl *dsi_ctrl)
 static int dsi_ctrl_debugfs_init(struct dsi_ctrl *dsi_ctrl,
 				 struct dentry *parent)
 {
-	char dbg_name[DSI_DEBUG_NAME_LEN];
-
-	snprintf(dbg_name, DSI_DEBUG_NAME_LEN, "dsi%d_ctrl",
-			dsi_ctrl->cell_index);
-	sde_dbg_reg_register_base(dbg_name,
-			dsi_ctrl->hw.base,
-			msm_iomap_size(dsi_ctrl->pdev, "dsi_ctrl"));
 	return 0;
 }
 static int dsi_ctrl_debugfs_deinit(struct dsi_ctrl *dsi_ctrl)
@@ -2076,6 +2069,7 @@ static struct platform_driver dsi_ctrl_driver = {
 	},
 };
 
+#if defined(CONFIG_DEBUG_FS)
 
 void dsi_ctrl_debug_dump(u32 *entries, u32 size)
 {
@@ -2097,6 +2091,7 @@ void dsi_ctrl_debug_dump(u32 *entries, u32 size)
 	mutex_unlock(&dsi_ctrl_list_lock);
 }
 
+#endif
 /**
  * dsi_ctrl_get() - get a dsi_ctrl handle from an of_node
  * @of_node:    of_node of the DSI controller.
@@ -2741,7 +2736,6 @@ static irqreturn_t dsi_ctrl_isr(int irq, void *ptr)
 static int _dsi_ctrl_setup_isr(struct dsi_ctrl *dsi_ctrl)
 {
 	int irq_num, rc;
-	uint32_t intr_idx;
 
 	if (!dsi_ctrl)
 		return -EINVAL;
@@ -2752,22 +2746,6 @@ static int _dsi_ctrl_setup_isr(struct dsi_ctrl *dsi_ctrl)
 	init_completion(&dsi_ctrl->irq_info.vid_frame_done);
 	init_completion(&dsi_ctrl->irq_info.cmd_frame_done);
 	init_completion(&dsi_ctrl->irq_info.bta_done);
-
-	/* If there is unbalanced refcount for any interrupt, irq_stat_mask
-	 * does not get clear during suspend. On resume, enable irq is not
-	 * called leading to ctrl ISR permanently disabled. This is a defensive
-	 * check to recover from such scenario.
-	 */
-	for (intr_idx = DSI_SINT_CMD_MODE_DMA_DONE;
-	     intr_idx < DSI_STATUS_INTERRUPT_COUNT; intr_idx++) {
-		if (dsi_ctrl->irq_info.irq_stat_refcount[intr_idx]) {
-			DSI_CTRL_ERR(dsi_ctrl,
-				     "refcount mismatch: intr_idx %d\n",
-				     intr_idx);
-			dsi_ctrl->irq_info.irq_stat_refcount[intr_idx] = 0;
-		}
-	}
-	dsi_ctrl->irq_info.irq_stat_mask = 0x0;
 
 	irq_num = platform_get_irq(dsi_ctrl->pdev, 0);
 	if (irq_num < 0) {
@@ -2803,7 +2781,6 @@ static void _dsi_ctrl_destroy_isr(struct dsi_ctrl *dsi_ctrl)
 		devm_free_irq(&dsi_ctrl->pdev->dev,
 				dsi_ctrl->irq_info.irq_num, dsi_ctrl);
 		dsi_ctrl->irq_info.irq_num = -1;
-		dsi_ctrl->irq_info.irq_stat_mask = 0x0;
 	}
 }
 

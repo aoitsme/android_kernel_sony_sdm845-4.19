@@ -8,6 +8,11 @@
 #include <dt-bindings/thermal/thermal.h>
 
 &spmi_bus {
+	#address-cells = <2>;
+	#size-cells = <0>;
+	interrupt-controller;
+	#interrupt-cells = <4>;
+
 	pmi8998_lsid0: qcom,pmi8998@2 {
 		compatible = "qcom,spmi-pmic";
 		reg = <0x2 SPMI_USID>;
@@ -418,7 +423,7 @@
 			};
 		};
 
-		pmi8998_rgb_led: qcom,leds@d000 {
+		pmi8998_rgb_led: qcom,pwms@d000 {
 			compatible = "qcom,tri-led";
 			reg = <0xd000 0x100>;
 
@@ -664,29 +669,29 @@
 
 		};
 
-		pmi8998_haptics: qcom,haptic@c000 {
+		pmi8998_haptics: qcom,haptics@c000 {
 			compatible = "qcom,haptics";
 			reg = <0xc000 0x100>;
+			qcom,pmic-revid = <&pmi8998_revid>;
 			interrupts = <0x3 0xc0 0x0 IRQ_TYPE_EDGE_BOTH>,
 				     <0x3 0xc0 0x1 IRQ_TYPE_EDGE_BOTH>;
 			interrupt-names = "hap-sc-irq", "hap-play-irq";
 			qcom,actuator-type = "lra";
 			qcom,vmax-mv = <3200>;
-			// qcom,lra-high-z = "opt1"; Need to implement that later
 			qcom,play-rate-us = <6667>;
 			qcom,lra-resonance-sig-shape = "sine";
 			qcom,lra-auto-resonance-mode = "qwd";
 			qcom,lra-allow-variable-play-rate;
-			qcom,pmic-revid = <&pmi8998_revid>;
-			status = "disabled";
 
 			wf_0 {
 				/* CLICK */
 				qcom,effect-id = <0>;
 				qcom,wf-vmax-mv = <3600>;
-				qcom,wf-pattern = [3e 3e 3e];
+				qcom,wf-pattern = [3e 3e 3e 3e 3e 3e 3e 3e];
 				qcom,wf-play-rate-us = <6667>;
-				qcom,wf-brake-pattern = [01 00 00 00];
+				qcom,wf-brake-pattern = [00 00 00 00];
+				qcom,wf-repeat-count = <1>;
+				qcom,wf-s-repeat-count = <1>;
 				qcom,lra-auto-resonance-disable;
 			};
 
@@ -694,9 +699,10 @@
 				/* DOUBLE CLICK */
 				qcom,effect-id = <1>;
 				qcom,wf-vmax-mv = <3600>;
-				qcom,wf-pattern = [7e 7e 02 02 02 02 02 02];
-				qcom,wf-play-rate-us = <7143>;
-				qcom,wf-repeat-count = <2>;
+				qcom,wf-pattern = [3e 3e 3e 3e 3e 3e 3e 3e];
+				qcom,wf-play-rate-us = <6667>;
+				qcom,wf-brake-pattern = [00 00 00 00];
+				qcom,wf-repeat-count = <1>;
 				qcom,wf-s-repeat-count = <1>;
 				qcom,lra-auto-resonance-disable;
 			};
@@ -705,8 +711,11 @@
 				/* TICK */
 				qcom,effect-id = <2>;
 				qcom,wf-vmax-mv = <3600>;
-				qcom,wf-pattern = [7e 7e];
-				qcom,wf-play-rate-us = <4000>;
+				qcom,wf-pattern = [3e 3e 3e 3e 3e 3e 3e 3e];
+				qcom,wf-play-rate-us = <6667>;
+				qcom,wf-brake-pattern = [00 00 00 00];
+				qcom,wf-repeat-count = <1>;
+				qcom,wf-s-repeat-count = <1>;
 				qcom,lra-auto-resonance-disable;
 			};
 
@@ -714,8 +723,11 @@
 				/* THUD */
 				qcom,effect-id = <3>;
 				qcom,wf-vmax-mv = <3600>;
-				qcom,wf-pattern = [7e 7e 7e];
+				qcom,wf-pattern = [3e 3e 3e 3e 3e 3e 3e 3e];
 				qcom,wf-play-rate-us = <6667>;
+				qcom,wf-brake-pattern = [00 00 00 00];
+				qcom,wf-repeat-count = <1>;
+				qcom,wf-s-repeat-count = <1>;
 				qcom,lra-auto-resonance-disable;
 			};
 
@@ -723,8 +735,11 @@
 				/* POP */
 				qcom,effect-id = <4>;
 				qcom,wf-vmax-mv = <3600>;
-				qcom,wf-pattern = [7e 7e];
-				qcom,wf-play-rate-us = <5000>;
+				qcom,wf-pattern = [3e 3e 3e 3e 3e 3e 3e 3e];
+				qcom,wf-play-rate-us = <6667>;
+				qcom,wf-brake-pattern = [00 00 00 00];
+				qcom,wf-repeat-count = <1>;
+				qcom,wf-s-repeat-count = <1>;
 				qcom,lra-auto-resonance-disable;
 			};
 
@@ -732,9 +747,11 @@
 				/* HEAVY CLICK */
 				qcom,effect-id = <5>;
 				qcom,wf-vmax-mv = <3600>;
-				qcom,wf-pattern = [7e 7e 7e];
+				qcom,wf-pattern = [3e 3e 3e 3e 3e 3e 3e 3e];
 				qcom,wf-play-rate-us = <6667>;
-				qcom,wf-brake-pattern = [03 00 00 00];
+				qcom,wf-brake-pattern = [00 00 00 00];
+				qcom,wf-repeat-count = <1>;
+				qcom,wf-s-repeat-count = <1>;
 				qcom,lra-auto-resonance-disable;
 			};
 		};
@@ -790,19 +807,27 @@
 		cooling-maps {
 			vbat_cpu4 {
 				trip = <&low_vbat>;
-				cooling-device = <&cpu4_isolate 1 1>;
+				cooling-device =
+					<&CPU4 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			vbat_cpu5 {
 				trip = <&low_vbat>;
-				cooling-device = <&cpu5_isolate 1 1>;
+				cooling-device =
+					<&CPU5 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			vbat_map6 {
 				trip = <&low_vbat>;
-				cooling-device = <&cpu6_isolate 1 1>;
+				cooling-device =
+					<&CPU6 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			vbat_map7 {
 				trip = <&low_vbat>;
-				cooling-device = <&cpu7_isolate 1 1>;
+				cooling-device =
+					<&CPU7 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 		};
 	};
@@ -856,19 +881,27 @@
 		cooling-maps {
 			soc_cpu4 {
 				trip = <&low_soc>;
-				cooling-device = <&cpu4_isolate 1 1>;
+				cooling-device =
+					<&CPU4 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			soc_cpu5 {
 				trip = <&low_soc>;
-				cooling-device = <&cpu5_isolate 1 1>;
+				cooling-device =
+					<&CPU5 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			soc_map6 {
 				trip = <&low_soc>;
-				cooling-device = <&cpu6_isolate 1 1>;
+				cooling-device =
+					<&CPU6 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 			soc_map7 {
 				trip = <&low_soc>;
-				cooling-device = <&cpu7_isolate 1 1>;
+				cooling-device =
+					<&CPU7 THERMAL_MAX_LIMIT
+						THERMAL_MAX_LIMIT>;
 			};
 		};
 	};

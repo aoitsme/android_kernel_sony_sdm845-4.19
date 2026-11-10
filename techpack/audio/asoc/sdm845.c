@@ -22,7 +22,7 @@
 #include <sound/pcm_params.h>
 #include <sound/info.h>
 #include <device_event.h>
-#include <soc/snd_event.h>
+#include <dsp/audio_notifier.h>
 #include <dsp/q6afe-v2.h>
 #include <dsp/q6core.h>
 #include "msm-pcm-routing-v2.h"
@@ -53,6 +53,7 @@
 #define WCD9XXX_MBHC_DEF_BUTTONS    8
 #define WCD9XXX_MBHC_DEF_RLOADS     5
 #define CODEC_EXT_CLK_RATE          9600000
+#define ADSP_STATE_READY_TIMEOUT_MS 3000
 #define DEV_NAME_STR_LEN            32
 
 #define WSA8810_NAME_1 "wsa881x.20170211"
@@ -160,10 +161,6 @@ struct msm_pinctrl_info {
 
 static atomic_t pinctrl_ref_count;
 
-enum {
-	AFE_LOOPBACK_TX_IDX = 0,
-	AFE_LOOPBACK_TX_IDX_MAX,
-};
 struct msm_asoc_mach_data {
 	u32 mclk_freq;
 	int us_euro_gpio; /* used by gpio driver API */
@@ -175,7 +172,7 @@ struct msm_asoc_mach_data {
 	struct snd_info_entry *codec_root;
 	struct msm_pinctrl_info pinctrl_info;
 	struct snd_soc_component *component;
-	bool is_afe_config_done;
+	struct work_struct adsp_power_up_work;
 };
 
 struct msm_asoc_wcd93xx_codec {
@@ -461,10 +458,6 @@ static struct dev_config aux_pcm_tx_cfg[] = {
 	[QUAT_AUX_PCM] = {SAMPLING_RATE_8KHZ, SNDRV_PCM_FORMAT_S16_LE, 1},
 };
 
-static struct dev_config afe_loopback_tx_cfg[] = {
-	[AFE_LOOPBACK_TX_IDX] = {SAMPLING_RATE_48KHZ, SNDRV_PCM_FORMAT_S16_LE, 1},
-};
-
 static int msm_vi_feed_tx_ch = 2;
 static const char *const slim_rx_ch_text[] = {"One", "Two"};
 static const char *const slim_tx_ch_text[] = {"One", "Two", "Three", "Four",
@@ -516,7 +509,6 @@ static const char *const mi2s_ch_text[] = {"One", "Two", "Three", "Four",
 					   "Eight"};
 static const char *const hifi_text[] = {"Off", "On"};
 static const char *const qos_text[] = {"Disable", "Enable"};
-static const char *const afe_loopback_tx_ch_text[] = {"One", "Two"};
 
 static SOC_ENUM_SINGLE_EXT_DECL(slim_0_rx_chs, slim_rx_ch_text);
 static SOC_ENUM_SINGLE_EXT_DECL(slim_2_rx_chs, slim_rx_ch_text);
@@ -584,10 +576,12 @@ static SOC_ENUM_SINGLE_EXT_DECL(aux_pcm_rx_format, bit_format_text);
 static SOC_ENUM_SINGLE_EXT_DECL(aux_pcm_tx_format, bit_format_text);
 static SOC_ENUM_SINGLE_EXT_DECL(hifi_function, hifi_text);
 static SOC_ENUM_SINGLE_EXT_DECL(qos_vote, qos_text);
-static SOC_ENUM_SINGLE_EXT_DECL(afe_loopback_tx_chs, afe_loopback_tx_ch_text);
 
+static struct platform_device *spdev;
 static int msm_hifi_control;
 static int qos_vote_status;
+
+static bool is_initial_boot;
 static bool codec_reg_done;
 static struct snd_soc_aux_dev *msm_aux_dev;
 static struct snd_soc_codec_conf *msm_codec_conf;
@@ -977,28 +971,6 @@ static int slim_tx_bit_format_put(struct snd_kcontrol *kcontrol,
 			ucontrol->value.enumerated.item[0]);
 
 	return 0;
-}
-
-static int afe_loopback_tx_ch_get(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	pr_debug("%s: afe_loopback_tx_ch  = %d\n", __func__,
-		afe_loopback_tx_cfg[0].channels);
-	ucontrol->value.enumerated.item[0] =
-		afe_loopback_tx_cfg[0].channels - 1;
-
-	return 0;
-}
-
-static int afe_loopback_tx_ch_put(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	afe_loopback_tx_cfg[0].channels =
-			ucontrol->value.enumerated.item[0] + 1;
-	pr_debug("%s: afe_loopback_tx_ch  = %d\n", __func__,
-			afe_loopback_tx_cfg[0].channels);
-
-	return 1;
 }
 
 static int msm_slim_rx_ch_get(struct snd_kcontrol *kcontrol,
@@ -3216,9 +3188,6 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_qos_ctl_put),
 	SOC_SINGLE_MULTI_EXT("TDM Slot Map", SND_SOC_NOPM, 0, 255, 0, 4,
 	NULL, tdm_slot_map_put),
-	SOC_ENUM_EXT("AFE_LOOPBACK_TX Channels", afe_loopback_tx_chs,
-			afe_loopback_tx_ch_get, afe_loopback_tx_ch_put),
-
 };
 
 static int msm_snd_enable_codec_ext_clk(struct snd_soc_component *component,
@@ -3435,7 +3404,7 @@ static int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	struct snd_interval *channels = hw_param_interval(params,
 					SNDRV_PCM_HW_PARAM_CHANNELS);
 	int rc = 0;
-	int idx = 0;
+	int idx;
 	void *config = NULL;
 	struct snd_soc_component *component = NULL;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
@@ -3515,8 +3484,6 @@ static int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 		break;
 
 	case MSM_BACKEND_DAI_SLIMBUS_7_TX:
-		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
-				slim_tx_cfg[SLIM_TX_7].bit_format);
 		rate->min = rate->max = slim_tx_cfg[SLIM_TX_7].sample_rate;
 		channels->min = channels->max =
 			slim_tx_cfg[SLIM_TX_7].channels;
@@ -3762,14 +3729,6 @@ static int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 			mi2s_tx_cfg[QUAT_MI2S].channels;
 		break;
 
-	case MSM_BACKEND_DAI_AFE_LOOPBACK_TX:
-		param_set_mask(params, SNDRV_PCM_HW_PARAM_FORMAT,
-				afe_loopback_tx_cfg[idx].bit_format);
-		rate->min = rate->max = afe_loopback_tx_cfg[idx].sample_rate;
-		channels->min = channels->max =
-				afe_loopback_tx_cfg[idx].channels;
-		break;
-
 	default:
 		rate->min = rate->max = SAMPLING_RATE_48KHZ;
 		break;
@@ -3956,6 +3915,134 @@ static void msm_afe_clear_config(void)
 	afe_clear_config(AFE_SLIMBUS_SLAVE_CONFIG);
 }
 
+static int msm_adsp_power_up_config(struct snd_soc_component *component,
+				    struct snd_card *card)
+{
+	int ret = 0;
+	unsigned long timeout;
+	int adsp_ready = 0;
+	bool snd_card_online = 0;
+
+	timeout = jiffies +
+		msecs_to_jiffies(ADSP_STATE_READY_TIMEOUT_MS);
+
+	do {
+		if (!snd_card_online) {
+			snd_card_online = snd_card_is_online_state(card);
+			pr_debug("%s: Sound card is %s\n", __func__,
+				 snd_card_online ? "Online" : "Offline");
+		}
+		if (!adsp_ready) {
+			adsp_ready = q6core_is_adsp_ready();
+			pr_debug("%s: ADSP Audio is %s\n", __func__,
+				 adsp_ready ? "ready" : "not ready");
+		}
+		if (snd_card_online && adsp_ready)
+			break;
+
+		/*
+		 * Sound card/ADSP will be coming up after subsystem restart and
+		 * it might not be fully up when the control reaches
+		 * here. So, wait for 50msec before checking ADSP state
+		 */
+		msleep(50);
+	} while (time_after(timeout, jiffies));
+
+	if (!snd_card_online || !adsp_ready) {
+		pr_err("%s: Timeout. Sound card is %s, ADSP Audio is %s\n",
+		       __func__,
+		       snd_card_online ? "Online" : "Offline",
+		       adsp_ready ? "ready" : "not ready");
+		ret = -ETIMEDOUT;
+		goto err;
+	}
+
+	ret = msm_afe_set_config(component);
+	if (ret)
+		pr_err("%s: Failed to set AFE config. err %d\n",
+			__func__, ret);
+
+	return 0;
+
+err:
+	return ret;
+}
+
+static void msm_adsp_power_up_config_work(struct work_struct *work)
+{
+	struct msm_asoc_mach_data *pdata;
+	struct snd_soc_component *component;
+	struct snd_card *card;
+
+	pdata = container_of(work, struct msm_asoc_mach_data,
+			     adsp_power_up_work);
+	component = pdata->component;
+	card = component->card->snd_card;
+	msm_adsp_power_up_config(component, card);
+}
+
+static int sdm845_notifier_service_cb(struct notifier_block *this,
+					 unsigned long opcode, void *ptr)
+{
+	int ret;
+	struct snd_soc_card *card = NULL;
+	const char *be_dl_name = LPASS_BE_SLIMBUS_0_RX;
+	struct snd_soc_pcm_runtime *rtd;
+	struct snd_soc_component *component;
+	struct snd_soc_dai *codec_dai;
+	struct msm_asoc_mach_data *pdata;
+
+	pr_debug("%s: Service opcode 0x%lx\n", __func__, opcode);
+
+	switch (opcode) {
+	case AUDIO_NOTIFIER_SERVICE_DOWN:
+		/*
+		 * Use flag to ignore initial boot notifications
+		 * On initial boot msm_adsp_power_up_config is
+		 * called on init. There is no need to clear
+		 * and set the config again on initial boot.
+		 */
+		if (is_initial_boot)
+			break;
+		msm_afe_clear_config();
+		break;
+	case AUDIO_NOTIFIER_SERVICE_UP:
+		if (is_initial_boot) {
+			is_initial_boot = false;
+			break;
+		}
+		if (!spdev)
+			return -EINVAL;
+
+		card = platform_get_drvdata(spdev);
+		rtd = snd_soc_get_pcm_runtime(card, be_dl_name);
+		if (!rtd) {
+			dev_err(card->dev,
+				"%s: snd_soc_get_pcm_runtime for %s failed!\n",
+				__func__, be_dl_name);
+			ret = -EINVAL;
+			goto err;
+		}
+		codec_dai = rtd->codec_dai;
+		if (!strcmp(dev_name(codec_dai->dev), "tavil_codec"))
+			component = snd_soc_rtdcom_lookup(rtd, "tavil_codec");
+
+		pdata = snd_soc_card_get_drvdata(card);
+		pdata->component = component;
+		schedule_work(&pdata->adsp_power_up_work);
+		break;
+	default:
+		break;
+	}
+err:
+	return NOTIFY_OK;
+}
+
+static struct notifier_block service_nb = {
+	.notifier_call  = sdm845_notifier_service_cb,
+	.priority = -INT_MAX,
+};
+
 static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 {
 	int ret = 0;
@@ -4041,12 +4128,11 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 
 	msm_codec_fn.get_afe_config_fn = tavil_get_afe_config;
 
-	ret = msm_afe_set_config(component);
+	ret = msm_adsp_power_up_config(component, rtd->card->snd_card);
 	if (ret) {
 		pr_err("%s: Failed to set AFE config %d\n", __func__, ret);
 		goto err;
 	}
-	pdata->is_afe_config_done = true;
 
 	config_data = msm_codec_fn.get_afe_config_fn(component,
 						     AFE_AANC_VERSION);
@@ -5761,7 +5847,6 @@ static struct snd_soc_dai_link msm_common_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-rx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_USB_RX,
@@ -5918,7 +6003,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_0_RX,
@@ -5936,7 +6020,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_tx1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_0_TX,
@@ -5951,7 +6034,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_1_RX,
@@ -5968,7 +6050,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_tx3",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_1_TX,
@@ -5983,7 +6064,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx2",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_2_RX,
@@ -5999,7 +6079,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_3_RX,
@@ -6016,7 +6095,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_tx1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_3_TX,
@@ -6031,7 +6109,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_4_RX,
@@ -6048,7 +6125,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx3",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_5_RX,
@@ -6066,7 +6142,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_mad1",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_5_TX,
@@ -6081,7 +6156,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_rx4",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_6_RX,
@@ -6099,7 +6173,6 @@ static struct snd_soc_dai_link msm_tavil_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "tavil_codec",
 		.codec_dai_name = "tavil_vifeedback",
-		.dynamic_be = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_4_TX,
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
 		.ops = &msm_be_ops,
@@ -6122,7 +6195,6 @@ static struct snd_soc_dai_link msm_wcn_be_dai_links[] = {
 		 * supported usecase information
 		 */
 		.codec_dai_name = "btfm_bt_sco_a2dp_slim_rx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_7_RX,
@@ -6139,7 +6211,6 @@ static struct snd_soc_dai_link msm_wcn_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "btfmslim_slave",
 		.codec_dai_name = "btfm_bt_sco_slim_tx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_7_TX,
@@ -6154,7 +6225,6 @@ static struct snd_soc_dai_link msm_wcn_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "btfmslim_slave",
 		.codec_dai_name = "btfm_fm_slim_tx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SLIMBUS_8_TX,
@@ -6191,7 +6261,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-rx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_PRI_MI2S_RX,
@@ -6207,7 +6276,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-tx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_PRI_MI2S_TX,
@@ -6222,7 +6290,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-rx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_SECONDARY_MI2S_RX,
@@ -6238,7 +6305,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-tx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_SECONDARY_MI2S_TX,
@@ -6253,7 +6319,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-rx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_TERTIARY_MI2S_RX,
@@ -6269,7 +6334,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-tx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_TERTIARY_MI2S_TX,
@@ -6284,7 +6348,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-rx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.id = MSM_BACKEND_DAI_QUATERNARY_MI2S_RX,
@@ -6300,7 +6363,6 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.platform_name = "msm-pcm-routing",
 		.codec_name = "msm-stub-codec.1",
 		.codec_dai_name = "msm-stub-tx",
-		.dynamic_be = 1,
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.id = MSM_BACKEND_DAI_QUATERNARY_MI2S_TX,
@@ -6429,23 +6491,6 @@ static struct snd_soc_dai_link msm_auxpcm_be_dai_links[] = {
 	},
 };
 
-static struct snd_soc_dai_link msm_afe_rxtx_lb_be_dai_link[] = {
-	{
-		.name = LPASS_BE_AFE_LOOPBACK_TX,
-		.stream_name = "AFE Loopback Capture",
-		.cpu_dai_name = "msm-dai-q6-dev.24577",
-		.platform_name = "msm-pcm-routing",
-		.codec_name = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-tx",
-		.no_pcm = 1,
-		.dpcm_capture = 1,
-		.id = MSM_BACKEND_DAI_AFE_LOOPBACK_TX,
-		.be_hw_params_fixup = msm_be_hw_params_fixup,
-		.ignore_pmdown_time = 1,
-		.ignore_suspend = 1,
-	},
-};
-
 static struct snd_soc_dai_link msm_tavil_snd_card_dai_links[
 			 ARRAY_SIZE(msm_common_dai_links) +
 			 ARRAY_SIZE(msm_tavil_fe_dai_links) +
@@ -6455,8 +6500,7 @@ static struct snd_soc_dai_link msm_tavil_snd_card_dai_links[
 			 ARRAY_SIZE(msm_wcn_be_dai_links) +
 			 ARRAY_SIZE(ext_disp_be_dai_link) +
 			 ARRAY_SIZE(msm_mi2s_be_dai_links) +
-			 ARRAY_SIZE(msm_auxpcm_be_dai_links) +
-			 ARRAY_SIZE(msm_afe_rxtx_lb_be_dai_link)];
+			 ARRAY_SIZE(msm_auxpcm_be_dai_links)];
 
 static int msm_snd_card_tavil_late_probe(struct snd_soc_card *card)
 {
@@ -6758,8 +6802,6 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 	struct snd_soc_dai_link *dailink;
 	int len_1, len_2, len_3, len_4;
 	int total_links;
-	int rc = 0;
-	u32 val = 0;
 	const struct of_device_id *match;
 
 	match = of_match_node(sdm845_asoc_machine_of_match, dev->of_node);
@@ -6823,16 +6865,6 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 			msm_auxpcm_be_dai_links,
 			sizeof(msm_auxpcm_be_dai_links));
 			total_links += ARRAY_SIZE(msm_auxpcm_be_dai_links);
-		}
-
-		rc = of_property_read_u32(dev->of_node, "qcom,afe-rxtx-lb",
-				&val);
-		if (!rc && val) {
-			memcpy(msm_tavil_snd_card_dai_links + total_links,
-				msm_afe_rxtx_lb_be_dai_link,
-				sizeof(msm_afe_rxtx_lb_be_dai_link));
-			total_links +=
-				ARRAY_SIZE(msm_afe_rxtx_lb_be_dai_link);
 		}
 		dailink = msm_tavil_snd_card_dai_links;
 	} else if (!strcmp(match->data, "stub_codec")) {
@@ -7134,114 +7166,6 @@ static void msm_i2s_auxpcm_deinit(void)
 	}
 }
 
-static int sdm845_ssr_enable(struct device *dev, void *data)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct snd_soc_card *card = platform_get_drvdata(pdev);
-	struct msm_asoc_mach_data *pdata = NULL;
-	struct snd_soc_component *component = NULL;
-	int ret = 0;
-
-	if (!card) {
-		dev_err(dev, "%s: card is NULL\n", __func__);
-		ret = -EINVAL;
-		goto err;
-	}
-
-	if (!strcmp(card->name, "sdm845-tavil-snd-card")) {
-		pdata = snd_soc_card_get_drvdata(card);
-		if (!pdata->is_afe_config_done) {
-			const char *be_dl_name = LPASS_BE_SLIMBUS_0_RX;
-			struct snd_soc_pcm_runtime *rtd;
-
-			rtd = snd_soc_get_pcm_runtime(card, be_dl_name);
-			if (!rtd) {
-				dev_err(dev,
-					"%s: snd_soc_get_pcm_runtime for %s failed!\n",
-					__func__, be_dl_name);
-				ret = -EINVAL;
-				goto err;
-			}
-			component = snd_soc_rtdcom_lookup(rtd, "tavil_codec");
-			if (!component) {
-				dev_err(dev, "%s: component is NULL\n",
-					__func__);
-				ret = -EINVAL;
-				goto err;
-			}
-			ret = msm_afe_set_config(component);
-			if (ret)
-				dev_err(dev, "%s: Failed to set AFE config. err %d\n",
-					__func__, ret);
-			else
-				pdata->is_afe_config_done = true;
-		}
-	}
-	snd_soc_card_change_online_state(card, 1);
-	dev_dbg(dev, "%s: setting snd_card to ONLINE\n", __func__);
-
-err:
-	return ret;
-}
-static void sdm845_ssr_disable(struct device *dev, void *data)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct snd_soc_card *card = platform_get_drvdata(pdev);
-	struct msm_asoc_mach_data *pdata;
-
-	if (!card) {
-		dev_err(dev, "%s: card is NULL\n", __func__);
-		return;
-	}
-
-	dev_dbg(dev, "%s: setting snd_card to OFFLINE\n", __func__);
-	snd_soc_card_change_online_state(card, 0);
-
-	if (!strcmp(card->name, "sdm845-tavil-snd-card")) {
-		pdata = snd_soc_card_get_drvdata(card);
-		msm_afe_clear_config();
-		pdata->is_afe_config_done = false;
-	}
-}
-
-static const struct snd_event_ops sdm845_ssr_ops = {
-	.enable = sdm845_ssr_enable,
-	.disable = sdm845_ssr_disable,
-};
-
-static int msm_audio_ssr_compare(struct device *dev, void *data)
-{
-	struct device_node *node = data;
-
-	dev_dbg(dev, "%s: dev->of_node = 0x%p, node = 0x%p\n",
-		__func__, dev->of_node, node);
-	return (dev->of_node && dev->of_node == node);
-}
-
-static int msm_audio_ssr_register(struct device *dev)
-{
-	struct device_node *np = dev->of_node;
-	struct snd_event_clients *ssr_clients = NULL;
-	struct device_node *node;
-	int ret;
-	int i;
-
-	for (i = 0; ; i++) {
-		node = of_parse_phandle(np, "qcom,msm_audio_ssr_devs", i);
-		if (!node)
-			break;
-		snd_event_mstr_add_client(&ssr_clients,
-					msm_audio_ssr_compare, node);
-	}
-
-	ret = snd_event_master_register(dev, &sdm845_ssr_ops,
-					ssr_clients, NULL);
-	if (!ret)
-		snd_event_notify(dev, SND_EVENT_UP);
-
-	return ret;
-}
-
 static int msm_asoc_machine_probe(struct platform_device *pdev)
 {
 	struct snd_soc_card *card;
@@ -7333,6 +7257,9 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 		goto err;
 	}
 	dev_info(&pdev->dev, "Sound card %s registered\n", card->name);
+	spdev = pdev;
+
+	INIT_WORK(&pdata->adsp_power_up_work, msm_adsp_power_up_config_work);
 
 	ret = of_platform_populate(pdev->dev.of_node, NULL, NULL, &pdev->dev);
 	if (ret) {
@@ -7418,10 +7345,11 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 
 	msm_i2s_auxpcm_init(pdev);
 
-	ret = msm_audio_ssr_register(&pdev->dev);
-	if (ret)
-		dev_err(&pdev->dev,
-			"%s: Registration with SND event FWK failed ret = %d\n",
+	is_initial_boot = true;
+	ret = audio_notifier_register("sdm845", AUDIO_NOTIFIER_ADSP_DOMAIN,
+				      &service_nb);
+	if (ret < 0)
+		pr_err("%s: Audio notifier register failed ret = %d\n",
 			__func__, ret);
 
 	return 0;
@@ -7437,7 +7365,7 @@ static int msm_asoc_machine_remove(struct platform_device *pdev)
 	struct msm_asoc_mach_data *pdata =
 				snd_soc_card_get_drvdata(card);
 
-	snd_event_master_deregister(&pdev->dev);
+	audio_notifier_deregister("sdm845");
 	if (pdata->us_euro_gpio > 0) {
 		gpio_free(pdata->us_euro_gpio);
 		pdata->us_euro_gpio = 0;

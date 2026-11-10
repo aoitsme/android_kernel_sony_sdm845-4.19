@@ -38,7 +38,6 @@
 #define DSI_CLOCK_BITRATE_RADIX 10
 #define MAX_TE_SOURCE_ID  2
 
-u8 dbgfs_tx_cmd_buf[SZ_4K];
 #ifdef CONFIG_DRM_SDE_SPECIFIC_PANEL
 #define DELAY_SET_BACKLIGHT_TIME 100
 #define SET_BRIGHTNESS_VALUE 2047
@@ -5539,10 +5538,6 @@ int dsi_display_dev_remove(struct platform_device *pdev)
 	}
 
 	display = platform_get_drvdata(pdev);
-	if (!display || !display->panel_node) {
-		DSI_ERR("invalid display\n");
-		return -EINVAL;
-	}
 
 	/* decrement ref count */
 	of_node_put(display->panel_node);

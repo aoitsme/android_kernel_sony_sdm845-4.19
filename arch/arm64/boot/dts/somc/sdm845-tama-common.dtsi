@@ -15,7 +15,7 @@
 	};
 
 	ramoops: ramoops@ffc00000 {
-		compatible = "ramoops";
+		compatible = "removed-dma-pool", "ramoops";
 		no-map;
 		reg = <0 0xffc00000 0 0x00100000>;
 		record-size = <0x10000>;
@@ -684,6 +684,9 @@
 
 &pmi8998_charger {
 	qcom,otg-cl-ua = <1000000>;
+	smb2_vbus: qcom,smb2-vbus {
+		regulator-name = "smb2-vbus";
+	};
 };
 
 &pmi8998_wled {
@@ -725,14 +728,14 @@
 &pmi8998_torch0 {
 	qcom,current-ma = <120>;
 	qcom,max-current = <200>;
-	qcom,strobe-sel = <1>;
+	qcom,strobe-sel = <0>;
 	somc,sw-strobe-init;
 };
 
 &pmi8998_torch1 {
 	qcom,current-ma = <120>;
 	qcom,max-current = <200>;
-	qcom,strobe-sel = <1>;
+	qcom,strobe-sel = <0>;
 	somc,sw-strobe-init;
 };
 

@@ -36,22 +36,6 @@
 #define SDE_CRTC_FRAME_EVENT_SIZE	(4 * 2)
 
 /**
- * enum sde_session_type: session type
- * @SDE_SECURE_UI_SESSION:     secure UI usecase
- * @SDE_SECURE_CAMERA_SESSION: secure camera usecase
- * @SDE_SECURE_VIDEO_SESSION:  secure video usecase
- * @SDE_NON_SECURE_SESSION:    non secure usecase
- * @SDE_NULL_SESSION:          null commit usecase
- */
-enum sde_session_type {
-	SDE_SECURE_UI_SESSION,
-	SDE_SECURE_CAMERA_SESSION,
-	SDE_SECURE_VIDEO_SESSION,
-	SDE_NON_SECURE_SESSION,
-	SDE_NULL_SESSION,
-};
-
-/**
  * enum sde_crtc_client_type: crtc client type
  * @RT_CLIENT:	RealTime client like video/cmd mode display
  *              voting through apps rsc
@@ -273,13 +257,10 @@ struct sde_crtc_misr_info {
  * @misr_frame_count  : misr frame count provided by client
  * @misr_data     : store misr data before turning off the clocks.
  * @idle_notify_work: delayed worker to notify idle timeout to user space
- * @early_wakeup_work: work to trigger early wakeup
  * @power_event   : registered power event handle
  * @cur_perf      : current performance committed to clock/bandwidth driver
  * @plane_mask_old: keeps track of the planes used in the previous commit
  * @frame_trigger_mode: frame trigger mode
- * @cp_pu_feature_mask: mask indicating cp feature enable for partial update
- * @cached_user_roi_list : Copy of user_roi_list from previous PU frame
  * @ltm_buffer_cnt  : number of ltm buffers
  * @ltm_buffers     : struct stores ltm buffer related data
  * @ltm_buf_free    : list of LTM buffers that are available
@@ -290,7 +271,6 @@ struct sde_crtc_misr_info {
  * @needs_hw_reset  : Initiate a hw ctl reset
  * @hist_irq_idx    : hist interrupt irq idx
  * @comp_ratio      : Compression ratio
- * @dspp_blob_info  : blob containing dspp hw capability information
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -353,7 +333,6 @@ struct sde_crtc {
 	bool misr_enable_debugfs;
 	u32 misr_frame_count;
 	struct kthread_delayed_work idle_notify_work;
-	struct kthread_work early_wakeup_work;
 
 	struct sde_power_event *power_event;
 
@@ -365,9 +344,6 @@ struct sde_crtc {
 	/* blob for histogram data */
 	struct drm_property_blob *hist_blob;
 	enum frame_trigger_mode_type frame_trigger_mode;
-
-	u32 cp_pu_feature_mask;
-	struct msm_roi_list cached_user_roi_list;
 
 	u32 ltm_buffer_cnt;
 	struct sde_ltm_buffer *ltm_buffers[LTM_BUFFER_SIZE];
@@ -381,8 +357,6 @@ struct sde_crtc {
 	int hist_irq_idx;
 
 	int comp_ratio;
-
-	struct drm_property_blob *dspp_blob_info;
 };
 
 #define to_sde_crtc(x) container_of(x, struct sde_crtc, base)
@@ -403,7 +377,7 @@ struct sde_crtc {
  * @lm_roi        : Current LM ROI, possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
  * @user_roi_list : List of user's requested ROIs as from set property
-  * @property_state: Local storage for msm_prop properties
+ * @property_state: Local storage for msm_prop properties
  * @property_values: Current crtc property values
  * @input_fence_timeout_ns : Cached input fence timeout, in ns
  * @num_dim_layers: Number of dim layers
@@ -414,7 +388,6 @@ struct sde_crtc {
  * @ds_cfg: Destination scaler config
  * @scl3_lut_cfg: QSEED3 lut config
  * @new_perf: new performance state being requested
- * @secure_session: Indicates the type of secure session
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -444,7 +417,6 @@ struct sde_crtc_state {
 	struct sde_hw_scaler3_lut_cfg scl3_lut_cfg;
 
 	struct sde_core_perf_params new_perf;
-	int secure_session;
 };
 
 enum sde_crtc_irq_state {
@@ -874,12 +846,6 @@ void sde_crtc_get_misr_info(struct drm_crtc *crtc,
  */
 int sde_crtc_get_num_datapath(struct drm_crtc *crtc,
 		struct drm_connector *connector);
-
-/**
- * _sde_crtc_clear_dim_layers_v1 - clear all dim layer settings
- * @cstate:      Pointer to drm crtc state
- */
-void _sde_crtc_clear_dim_layers_v1(struct drm_crtc_state *state);
 
 /*
  * sde_crtc_set_compression_ratio - set compression ratio src_bpp/target_bpp
