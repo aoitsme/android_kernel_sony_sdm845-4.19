@@ -1442,7 +1442,7 @@ static int subsys_char_device_add(struct subsys_device *subsys_dev)
 
 	mutex_lock(&char_device_lock);
 	if (!major) {
-		ret = alloc_chrdev_region(&dev_no, 0, 4, "subsys");
+		ret = alloc_chrdev_region(&dev_no, 0, 32, "subsys");
 		if (ret < 0) {
 			pr_err("Failed to alloc subsys_dev region, err %d\n",
 									ret);
