@@ -293,16 +293,6 @@
 		uim2_detect_legacy;
 	};
 
-	sim_detect {
-		compatible = "sim-detect";
-
-		sim1_det {
-			label = "sim-detection";
-			gpios = <&tlmm 112 0x0>;
-			debounce-interval = <10>;
-		};
-	};
-
 	somc_water_detection: somc_water_detection {
 		compatible = "somc,water-detection";
 
@@ -2676,14 +2666,11 @@
 	sdm_gpio_112: sdm_gpio_112 {
 		mux {
 			pins = "gpio112";
-			function = "gpio";
 		};
 
 		config {
 			pins = "gpio112";
 			drive-strength = <2>;
-			bias-disable;
-			input-enable;
 		};
 	};
 
