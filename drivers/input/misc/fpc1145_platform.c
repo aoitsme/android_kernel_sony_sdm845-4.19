@@ -502,6 +502,7 @@ static irqreturn_t fpc1145_irq_handler(int irq, void *handle)
 	disable_irq_nosync(fpc1145->irq);
 	pm_wakeup_event(fpc1145->dev, FPC_MAX_HAL_PROCESSING_TIME);
 	wake_up_interruptible(&fpc1145->irq_evt);
+	sysfs_notify(&fpc1145->dev->kobj, NULL, "irq");
 
 	mutex_unlock(&fpc1145->intrpoll_lock);
 
@@ -730,7 +731,21 @@ static ssize_t irq_show(struct device *dev,
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n", irq_val);
 }
-static DEVICE_ATTR_RO(irq);
+
+static ssize_t irq_store(struct device *dev,
+			 struct device_attribute *attr,
+			 const char *buf, size_t count)
+{
+	struct fpc1145_data *fpc1145 = dev_get_drvdata(dev);
+
+	if (!fpc1145)
+		return -ENODEV;
+
+	fpc1145_enable_irq_if_disabled(fpc1145);
+
+	return count;
+}
+static DEVICE_ATTR_RW(irq);
 
 static struct attribute *fpc1145_attributes[] = {
 	&dev_attr_spi_prepare.attr,
