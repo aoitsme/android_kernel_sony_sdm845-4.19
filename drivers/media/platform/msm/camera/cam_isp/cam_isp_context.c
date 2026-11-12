@@ -622,17 +622,17 @@ static int __cam_isp_ctx_handle_buf_done_in_activated_state(
 				CAM_DBG(CAM_ISP, "Sync failed with rc = %d",
 					 rc);
 		} else if (!req_isp->bubble_report) {
-			CAM_ERR(CAM_ISP,
-				"Sync with failure: req %lld res 0x%x fd 0x%x, ctx %u",
+			CAM_WARN(CAM_ISP,
+				"Sync with success (bubble detected): req %lld res 0x%x fd 0x%x, ctx %u",
 				req->request_id,
 				req_isp->fence_map_out[j].resource_handle,
 				req_isp->fence_map_out[j].sync_id,
 				ctx->ctx_id);
 
 			rc = cam_sync_signal(req_isp->fence_map_out[j].sync_id,
-				CAM_SYNC_STATE_SIGNALED_ERROR);
+				CAM_SYNC_STATE_SIGNALED_SUCCESS);
 			if (rc)
-				CAM_ERR(CAM_ISP, "Sync failed with rc = %d",
+				CAM_DBG(CAM_ISP, "Sync failed with rc = %d",
 					rc);
 		} else {
 			/*
@@ -1165,7 +1165,7 @@ static int __cam_isp_ctx_epoch_in_applied(struct cam_isp_context *ctx_isp,
 			jiffies_to_msecs(jiffies);
 	}
 	__cam_isp_ctx_send_sof_timestamp(ctx_isp, request_id,
-		CAM_REQ_MGR_SOF_EVENT_ERROR);
+		CAM_REQ_MGR_SOF_EVENT_SUCCESS);
 	__cam_isp_ctx_update_event_record(ctx_isp,
 		CAM_ISP_CTX_EVENT_EPOCH, req);
 
@@ -1326,7 +1326,7 @@ static int __cam_isp_ctx_epoch_in_bubble_applied(
 			ctx_isp->req_info.last_reported_id_time_stamp =
 			jiffies_to_msecs(jiffies);
 			__cam_isp_ctx_send_sof_timestamp(ctx_isp, request_id,
-			CAM_REQ_MGR_SOF_EVENT_ERROR);
+				CAM_REQ_MGR_SOF_EVENT_SUCCESS);
 			__cam_isp_ctx_update_event_record(ctx_isp,
 				CAM_ISP_CTX_EVENT_EPOCH, req);
 		} else {
@@ -1875,7 +1875,7 @@ static struct cam_isp_ctx_irq_ops
 		.irq_ops = {
 			__cam_isp_ctx_handle_error,
 			__cam_isp_ctx_sof_in_activated_state,
-			NULL,
+			__cam_isp_ctx_reg_upd_in_activated_state,
 			__cam_isp_ctx_notify_sof_in_activated_state,
 			__cam_isp_ctx_notify_eof_in_activated_state,
 			__cam_isp_ctx_buf_done_in_bubble,
@@ -1948,7 +1948,7 @@ static struct cam_isp_ctx_irq_ops
 		.irq_ops = {
 			__cam_isp_ctx_handle_error,
 			__cam_isp_ctx_sof_in_activated_state,
-			NULL,
+			__cam_isp_ctx_reg_upd_in_activated_state,
 			__cam_isp_ctx_notify_sof_in_activated_state,
 			__cam_isp_ctx_notify_eof_in_activated_state,
 			__cam_isp_ctx_buf_done_in_bubble,
@@ -2750,7 +2750,7 @@ static int __cam_isp_ctx_rdi_only_sof_in_bubble_applied(
 			ctx_isp->req_info.last_reported_id_time_stamp =
 				jiffies_to_msecs(jiffies);
 			__cam_isp_ctx_send_sof_timestamp(ctx_isp, request_id,
-			CAM_REQ_MGR_SOF_EVENT_ERROR);
+				CAM_REQ_MGR_SOF_EVENT_SUCCESS);
 		} else
 			__cam_isp_ctx_send_sof_timestamp(ctx_isp, request_id,
 				CAM_REQ_MGR_SOF_EVENT_SUCCESS);
