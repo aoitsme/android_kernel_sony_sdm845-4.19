@@ -1132,7 +1132,7 @@ static int __cam_isp_ctx_epoch_in_applied(struct cam_isp_context *ctx_isp,
 	CAM_INFO(CAM_ISP, "ctx:%d Report Bubble flag %d req id:%lld",
 		ctx->ctx_id, req_isp->bubble_report, req->request_id);
 	__cam_isp_ctx_dump_state_monitor_array(ctx_isp, true);
-	if (req_isp->bubble_report && ctx->ctx_crm_intf &&
+	if (ctx->ctx_crm_intf &&
 		ctx->ctx_crm_intf->notify_err) {
 		struct cam_req_mgr_error_notify notify;
 
@@ -1144,8 +1144,6 @@ static int __cam_isp_ctx_epoch_in_applied(struct cam_isp_context *ctx_isp,
 		atomic_set(&ctx_isp->process_bubble, 1);
 		CAM_DBG(CAM_ISP, "Notify CRM about Bubble frame %lld, ctx %u",
 			ctx_isp->frame_id, ctx->ctx_id);
-	} else {
-		req_isp->bubble_report = 0;
 	}
 
 	/*
@@ -1583,7 +1581,12 @@ end:
 					ctx_isp->req_info.last_applied_req_id,
 					ctx->ctx_id);
 		}
-		ctx_isp->substate_activated = CAM_ISP_CTX_ACTIVATED_HW_ERROR;
+		if (error_event_data && error_event_data->recovery_enabled) {
+			CAM_INFO(CAM_ISP, "Recovery enabled, resetting substate to SOF");
+			ctx_isp->substate_activated = CAM_ISP_CTX_ACTIVATED_SOF;
+		} else {
+			ctx_isp->substate_activated = CAM_ISP_CTX_ACTIVATED_HW_ERROR;
+		}
 	} else {
 		CAM_ERR_RATE_LIMIT(CAM_ISP,
 			"Can not notify ERRROR to CRM for ctx %u",
