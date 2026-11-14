@@ -500,4 +500,13 @@ config MACH_SONY_APOLLO
 	  which is based on SONY Tama platform.
 	  If you enable this config,
 	  please use SONY Mobile device tree.
+
+config MACH_SONY_AURORA
+	bool "Sony Mobile Aurora"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the SONY Mobile Aurora device
+	  which is based on SONY Tama platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
 endmenu
