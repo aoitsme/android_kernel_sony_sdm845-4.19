@@ -20,6 +20,7 @@
 		pinctrl-0 = <&qupv3_se5_i2c_active>;
 		pinctrl-1 = <&qupv3_se5_i2c_sleep>;
 		compatible = "siw,sw49501";	/* compatible name (see ouch_lg4951.c) */
+		panel = <&dsi_2 &dsi_9>;
 		reg = <0x28>;		/* chip select indicator : spi->chip_select */
 		interrupt-parent = <&tlmm>;
 		interrupts = <125 0x2>;
