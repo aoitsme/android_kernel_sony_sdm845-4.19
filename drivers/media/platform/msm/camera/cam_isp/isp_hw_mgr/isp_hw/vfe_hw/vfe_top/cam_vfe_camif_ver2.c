@@ -261,39 +261,26 @@ static int cam_vfe_camif_resource_start(
 		CAM_VFE_TOP_VER2_MODULE_STATS]->cgc_ovd);
 
 	/* epoch config */
-	switch (soc_private->cpas_version) {
-	case CAM_CPAS_TITAN_170_V100:
-	case CAM_CPAS_TITAN_170_V110:
-	case CAM_CPAS_TITAN_170_V120:
-		cam_io_w_mb(rsrc_data->reg_data->epoch_line_cfg,
-				rsrc_data->mem_base +
-				rsrc_data->camif_reg->epoch_irq);
-		break;
-	default:
-		if (rsrc_data->fps == CAM_ISP_FPS_60) {
-			epoch0_irq_mask = ((rsrc_data->last_line -
-				rsrc_data->first_line) / 2) +
-				rsrc_data->first_line;
-		} else {
-			epoch0_irq_mask = (((rsrc_data->last_line -
-				rsrc_data->first_line) * 2) / 3) +
-				rsrc_data->first_line;
-		}
-		epoch1_irq_mask = rsrc_data->reg_data->epoch_line_cfg &
-				0xFFFF;
-		computed_epoch_line_cfg = (epoch0_irq_mask << 16) |
-				epoch1_irq_mask;
-		cam_io_w_mb(computed_epoch_line_cfg,
-				rsrc_data->mem_base +
-				rsrc_data->camif_reg->epoch_irq);
-		CAM_DBG(CAM_ISP, "first_line: %u\n"
-				"last_line: %u\n"
-				"epoch_line_cfg: 0x%x",
-				rsrc_data->first_line,
-				rsrc_data->last_line,
-				computed_epoch_line_cfg);
-		break;
+	if (rsrc_data->fps == CAM_ISP_FPS_60) {
+		epoch0_irq_mask = ((rsrc_data->last_line -
+			rsrc_data->first_line) / 2) +
+			rsrc_data->first_line;
+	} else {
+		epoch0_irq_mask = (((rsrc_data->last_line -
+			rsrc_data->first_line) * 2) / 3) +
+			rsrc_data->first_line;
 	}
+	epoch1_irq_mask = rsrc_data->reg_data->epoch_line_cfg &
+			0xFFFF;
+	computed_epoch_line_cfg = (epoch0_irq_mask << 16) |
+			epoch1_irq_mask;
+	cam_io_w_mb(computed_epoch_line_cfg,
+			rsrc_data->mem_base +
+			rsrc_data->camif_reg->epoch_irq);
+	CAM_INFO(CAM_ISP, "first_line: %u last_line: %u epoch_line_cfg: 0x%x",
+			rsrc_data->first_line,
+			rsrc_data->last_line,
+			computed_epoch_line_cfg);
 
 	camif_res->res_state = CAM_ISP_RESOURCE_STATE_STREAMING;
 

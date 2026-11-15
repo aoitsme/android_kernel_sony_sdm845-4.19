@@ -3579,12 +3579,6 @@ int walt_proc_group_thresholds_handler(struct ctl_table *table, int write,
 		return ret;
 	}
 
-	/* Enforce responsiveness: group upmigrate <= 65%, group downmigrate <= 50% */
-	if (sysctl_sched_group_upmigrate_pct > 65)
-		sysctl_sched_group_upmigrate_pct = 65;
-	if (sysctl_sched_group_downmigrate_pct > 50)
-		sysctl_sched_group_downmigrate_pct = 50;
-
 	/*
 	 * The load scale factor update happens with all
 	 * rqs locked. so acquiring 1 CPU rq lock and
@@ -3749,11 +3743,11 @@ void sched_set_refresh_rate(enum fps fps)
 }
 EXPORT_SYMBOL(sched_set_refresh_rate);
 
-/* Migration margins: 1024 * 100 / pct (65% upmigrate, 50% downmigrate) */
+/* Migration margins */
 unsigned int sysctl_sched_capacity_margin_up[MAX_MARGIN_LEVELS] = {
-			[0 ... MAX_MARGIN_LEVELS-1] = 1575}; /* 65% capacity threshold */
+			[0 ... MAX_MARGIN_LEVELS-1] = 1078}; /* ~5% margin */
 unsigned int sysctl_sched_capacity_margin_down[MAX_MARGIN_LEVELS] = {
-			[0 ... MAX_MARGIN_LEVELS-1] = 2048}; /* 50% capacity threshold */
+			[0 ... MAX_MARGIN_LEVELS-1] = 1205}; /* ~15% margin */
 
 #ifdef CONFIG_PROC_SYSCTL
 static void sched_update_updown_migrate_values(bool up)
@@ -3835,12 +3829,6 @@ int sched_updown_migrate_handler(struct ctl_table *table, int write,
 	}
 
 	for (i = 0; i < cap_margin_levels; i++) {
-		/* Enforce responsiveness: max 65% upmigrate (margin >= 1575), max 50% downmigrate (margin >= 2048) */
-		if (sysctl_sched_capacity_margin_up[i] < 1575)
-			sysctl_sched_capacity_margin_up[i] = 1575;
-		if (sysctl_sched_capacity_margin_down[i] < 2048)
-			sysctl_sched_capacity_margin_down[i] = 2048;
-
 		if (sysctl_sched_capacity_margin_up[i] >
 				sysctl_sched_capacity_margin_down[i]) {
 			memcpy(data, old_val, table->maxlen);

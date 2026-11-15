@@ -1784,6 +1784,14 @@ static int cam_fd_mgr_hw_prepare_update(void *hw_mgr_priv,
 
 	CAM_DBG(CAM_FD, "FramePrepare : Frame[%lld]", frame_req->request_id);
 
+	if (kmd_buf.handle) {
+		uintptr_t kmd_vaddr = 0;
+		size_t kmd_buf_len = 0;
+
+		if (!cam_mem_get_cpu_buf(kmd_buf.handle, &kmd_vaddr,
+			&kmd_buf_len))
+			cam_mem_put_cpu_buf(kmd_buf.handle);
+	}
 	return 0;
 error:
 	return rc;

@@ -22,7 +22,7 @@ static int __cam_lrme_ctx_acquire_dev_in_available(struct cam_context *ctx,
 	struct cam_acquire_dev_cmd *cmd)
 {
 	int rc = 0;
-	uintptr_t ctxt_to_hw_map = (uintptr_t)ctx->ctxt_to_hw_map;
+	uintptr_t ctxt_to_hw_map;
 	struct cam_lrme_context *lrme_ctx = ctx->ctx_priv;
 
 	CAM_DBG(CAM_LRME, "Enter ctx %d", ctx->ctx_id);
@@ -33,6 +33,7 @@ static int __cam_lrme_ctx_acquire_dev_in_available(struct cam_context *ctx,
 		return rc;
 	}
 
+	ctxt_to_hw_map = (uintptr_t)ctx->ctxt_to_hw_map;
 	ctxt_to_hw_map |= (lrme_ctx->index << CAM_LRME_CTX_INDEX_SHIFT);
 	ctx->ctxt_to_hw_map = (void *)ctxt_to_hw_map;
 
@@ -47,6 +48,8 @@ static int __cam_lrme_ctx_release_dev_in_acquired(struct cam_context *ctx,
 	int rc = 0;
 
 	CAM_DBG(CAM_LRME, "Enter ctx %d", ctx->ctx_id);
+
+	cam_context_flush_ctx_to_hw(ctx);
 
 	rc = cam_context_release_dev_to_hw(ctx, cmd);
 	if (rc) {

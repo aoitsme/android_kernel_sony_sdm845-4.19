@@ -6096,7 +6096,7 @@ static void __qsmmuv500_errata1_tlbiall(struct arm_smmu_domain *smmu_domain)
 			       &desc);
 	if (ret) {
 		dev_err(smmu->dev, "Calling into TZ to disable ERRATA1 failed - IOMMU hardware in bad state\n");
-		BUG();
+		WARN_ON_ONCE(1);
 		return;
 	}
 
@@ -6106,9 +6106,9 @@ static void __qsmmuv500_errata1_tlbiall(struct arm_smmu_domain *smmu_domain)
 
 	if (readl_poll_timeout_atomic(base + ARM_SMMU_CB_TLBSTATUS, val,
 			      !(val & TLBSTATUS_SACTIVE), 0, 10000)) {
-		dev_err(smmu->dev, "ERRATA1 TLBSYNC timeout - IOMMU hardware in bad state");
+		dev_err(smmu->dev, "ERRATA1 TLBSYNC timeout - IOMMU hardware in bad state\n");
 		trace_tlbsync_timeout(dev, 0);
-		BUG();
+		WARN_ON_ONCE(1);
 	}
 
 	msm_bus_noc_throttle_wa(false);
@@ -6120,7 +6120,7 @@ static void __qsmmuv500_errata1_tlbiall(struct arm_smmu_domain *smmu_domain)
 			       &desc);
 	if (ret) {
 		dev_err(smmu->dev, "Calling into TZ to reenable ERRATA1 failed - IOMMU hardware in bad state\n");
-		BUG();
+		WARN_ON_ONCE(1);
 	}
 }
 

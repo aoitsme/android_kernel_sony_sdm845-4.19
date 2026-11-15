@@ -4296,7 +4296,7 @@ static int cam_ife_mgr_prepare_hw_update(void *hw_mgr_priv,
 		0);
 	if (rc) {
 		CAM_ERR(CAM_ISP, "Patch ISP packet failed.");
-		return rc;
+		goto end;
 	}
 
 	prepare->num_hw_update_entries = 0;
@@ -4399,6 +4399,14 @@ static int cam_ife_mgr_prepare_hw_update(void *hw_mgr_priv,
 	ctx->res_bitmap = 0;
 
 end:
+	if (kmd_buf.handle) {
+		uintptr_t kmd_vaddr = 0;
+		size_t kmd_buf_len = 0;
+
+		if (!cam_mem_get_cpu_buf(kmd_buf.handle, &kmd_vaddr,
+			&kmd_buf_len))
+			cam_mem_put_cpu_buf(kmd_buf.handle);
+	}
 	return rc;
 }
 
@@ -5890,11 +5898,10 @@ static int cam_ife_hw_mgr_handle_buf_done_for_hw_res(
 			/*
 			 * It is an indication that bandwidth is not sufficient
 			 * to generate composite done irq within the VBI time.
-			 * Fall-through to SUCCESS so buffer fence is signaled and
-			 * ISP active_req_cnt can decrement without congestion stalling.
 			 */
-			CAM_INFO_RATE_LIMIT(CAM_ISP, "Composite overwrite detected on res_id %d (completing buf_done)",
+			CAM_INFO_RATE_LIMIT(CAM_ISP, "Composite overwrite detected on res_id %d",
 				isp_ife_out_res->res_id);
+			break;
 		case CAM_VFE_IRQ_STATUS_SUCCESS:
 			buf_done_event_data.num_handles = 1;
 			buf_done_event_data.resource_handle[0] =

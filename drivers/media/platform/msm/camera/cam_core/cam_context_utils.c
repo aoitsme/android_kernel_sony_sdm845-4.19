@@ -485,6 +485,13 @@ int32_t cam_context_prepare_dev_to_hw(struct cam_context *ctx,
 						req->request_id);
 
 				cam_context_putref(ctx);
+				for (j--; j >= 0; j--) {
+					if (!cam_sync_deregister_callback(
+						cam_context_sync_callback,
+						(void *)req,
+						req->in_map_entries[j].sync_id))
+						cam_context_putref(ctx);
+				}
 				goto put_ref;
 
 			}
@@ -498,9 +505,6 @@ int32_t cam_context_prepare_dev_to_hw(struct cam_context *ctx,
 			ctx->dev_name, ctx->ctx_id);
 
 	return rc;
-put_ctx_ref:
-	for (; j >= 0; j--)
-		cam_context_putref(ctx);
 put_ref:
 	for (--i; i >= 0; i--) {
 		if (cam_sync_put_obj_ref(req->out_map_entries[i].sync_id))
@@ -661,7 +665,7 @@ int32_t cam_context_flush_ctx_to_hw(struct cam_context *ctx)
 				cam_context_sync_callback,
 				(void *)req,
 				req->in_map_entries[i].sync_id);
-			if (!rc) {
+			if (!rc || rc == -EINVAL) {
 				cam_context_putref(ctx);
 				if (atomic_inc_return(&req->num_in_acked) ==
 					req->num_in_map_entries)
@@ -842,7 +846,7 @@ int32_t cam_context_flush_req_to_hw(struct cam_context *ctx,
 					cam_context_sync_callback,
 					(void *)req,
 					req->in_map_entries[i].sync_id);
-				if (rc)
+				if (rc && rc != -EINVAL)
 					continue;
 
 				cam_context_putref(ctx);

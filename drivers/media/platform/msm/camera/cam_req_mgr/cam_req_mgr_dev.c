@@ -559,17 +559,15 @@ int cam_req_mgr_notify_message(struct cam_req_mgr_message *msg,
 
 	if (id == V4L_EVENT_CAM_REQ_MGR_ERROR) {
 		/*
-		 * Legacy Sony camera middleware (libcammw.so) treats any V4L error
-		 * event (id == 1) as immediately fatal to streaming, aborting
-		 * during FastConv even when the hardware is recovering or pumping
-		 * valid frames. Only forward truly unrecoverable device errors.
+		 * Legacy Sony camera middleware (libcammw.so) unconditionally interprets
+		 * any V4L error event (id == 1) as fatal ISP pipeline failure, aborting
+		 * during FastConv even when streaming is actively delivering valid SOF
+		 * frames and hardware recovery is succeeding. Completely suppress
+		 * V4L_EVENT_CAM_REQ_MGR_ERROR to userspace.
 		 */
-		if (msg->u.err_msg.error_type != CAM_REQ_MGR_ERROR_TYPE_DEVICE &&
-		    msg->u.err_msg.error_type != CAM_REQ_MGR_ERROR_TYPE_FULL_RECOVERY) {
-			pr_info("CAM_CRM: Suppressing recoverable V4L error event to userspace (type=%d)\n",
-				msg->u.err_msg.error_type);
-			return 0;
-		}
+		pr_info("CAM_CRM: Suppressing V4L error event to userspace (id=%d, type=%d)\n",
+			id, msg->u.err_msg.error_type);
+		return 0;
 	}
 
 	event.id = id;
