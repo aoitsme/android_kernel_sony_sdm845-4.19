@@ -665,7 +665,7 @@ int32_t cam_context_flush_ctx_to_hw(struct cam_context *ctx)
 				cam_context_sync_callback,
 				(void *)req,
 				req->in_map_entries[i].sync_id);
-			if (!rc || rc == -EINVAL) {
+			if (!rc) {
 				cam_context_putref(ctx);
 				if (atomic_inc_return(&req->num_in_acked) ==
 					req->num_in_map_entries)
@@ -846,7 +846,7 @@ int32_t cam_context_flush_req_to_hw(struct cam_context *ctx,
 					cam_context_sync_callback,
 					(void *)req,
 					req->in_map_entries[i].sync_id);
-				if (rc && rc != -EINVAL)
+				if (rc)
 					continue;
 
 				cam_context_putref(ctx);
