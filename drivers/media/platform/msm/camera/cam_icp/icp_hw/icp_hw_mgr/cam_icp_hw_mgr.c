@@ -3685,6 +3685,15 @@ static int cam_icp_mgr_process_cmd_desc(struct cam_icp_hw_mgr *hw_mgr,
 		}
 	}
 
+	for (i = 0; i < packet->num_cmd_buf; i++) {
+		if (cmd_desc[i].type == CAM_CMD_BUF_FW) {
+			if (cam_mem_put_cpu_buf(cmd_desc[i].mem_handle)) {
+				CAM_WARN(CAM_ICP, "put cmd buf failed 0x%x",
+					cmd_desc[i].mem_handle);
+			}
+		}
+	}
+
 	return rc;
 
 rel_cmd_buf:

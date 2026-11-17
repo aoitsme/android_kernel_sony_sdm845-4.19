@@ -513,6 +513,15 @@ int cam_hw_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 			}
 
 			CAM_DBG(CAM_CDM, "Got the HW VA");
+			if (req->data->type == CAM_CDM_BL_CMD_TYPE_MEM_HANDLE) {
+				struct cam_mem_cache_ops_cmd cache_cmd = {
+					.buf_handle = cdm_cmd->cmd[i].bl_addr.mem_handle,
+					.mem_cache_ops = CAM_MEM_CLEAN_CACHE,
+				};
+
+				cam_mem_mgr_cache_ops(&cache_cmd);
+			}
+			wmb();
 			if (core->bl_tag >=
 				(CAM_CDM_HWFIFO_SIZE - 1))
 				core->bl_tag = 0;

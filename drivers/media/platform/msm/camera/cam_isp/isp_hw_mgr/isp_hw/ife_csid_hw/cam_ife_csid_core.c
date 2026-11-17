@@ -3582,29 +3582,16 @@ irqreturn_t cam_ife_csid_irq(int irq_num, void *data)
 	spin_lock_irqsave(&csid_hw->lock_state, flags);
 	if (csid_hw->device_enabled == 1) {
 		if (irq_status[CSID_IRQ_STATUS_RX] &
-			CSID_CSI2_RX_ERROR_LANE0_FIFO_OVERFLOW) {
-			fatal_err_detected = true;
-			goto handle_fatal_error;
-		}
-		if (irq_status[CSID_IRQ_STATUS_RX] &
-			CSID_CSI2_RX_ERROR_LANE1_FIFO_OVERFLOW) {
-			fatal_err_detected = true;
-			goto handle_fatal_error;
-		}
-		if (irq_status[CSID_IRQ_STATUS_RX] &
-			CSID_CSI2_RX_ERROR_LANE2_FIFO_OVERFLOW) {
-			fatal_err_detected = true;
-			goto handle_fatal_error;
-		}
-		if (irq_status[CSID_IRQ_STATUS_RX] &
-			CSID_CSI2_RX_ERROR_LANE3_FIFO_OVERFLOW) {
-			fatal_err_detected = true;
-			goto handle_fatal_error;
-		}
-		if (irq_status[CSID_IRQ_STATUS_RX] &
-			CSID_CSI2_RX_ERROR_TG_FIFO_OVERFLOW) {
-			fatal_err_detected = true;
-			goto handle_fatal_error;
+			(CSID_CSI2_RX_ERROR_LANE0_FIFO_OVERFLOW |
+			 CSID_CSI2_RX_ERROR_LANE1_FIFO_OVERFLOW |
+			 CSID_CSI2_RX_ERROR_LANE2_FIFO_OVERFLOW |
+			 CSID_CSI2_RX_ERROR_LANE3_FIFO_OVERFLOW |
+			 CSID_CSI2_RX_ERROR_TG_FIFO_OVERFLOW)) {
+			CAM_INFO_RATE_LIMIT(CAM_ISP,
+				"CSID:%d FIFO overflow status_rx:0x%x (non-fatal, continuing)",
+				csid_hw->hw_intf->hw_idx,
+				irq_status[CSID_IRQ_STATUS_RX]);
+			need_dump_csid_err = true;
 		}
 		if (irq_status[CSID_IRQ_STATUS_RX] &
 			CSID_CSI2_RX_ERROR_CPHY_EOT_RECEPTION) {
@@ -3638,14 +3625,12 @@ irqreturn_t cam_ife_csid_irq(int irq_num, void *data)
 			irq_status);
 	}
 
-handle_fatal_error:
 	spin_unlock_irqrestore(&csid_hw->lock_state, flags);
 	if (fatal_err_detected) {
 		CAM_INFO(CAM_ISP,
 			"CSID: %d cnt: %d Halt csi2 rx irq_status_rx:0x%x",
 			csid_hw->hw_intf->hw_idx, csid_hw->csi2_cfg_cnt,
 			irq_status[CSID_IRQ_STATUS_RX]);
-		cam_ife_csid_halt_csi2(csid_hw);
 		cam_csid_dispatch_irq(csid_hw,
 			CAM_ISP_HW_ERROR_CSID_FATAL,
 			irq_status);
@@ -3764,13 +3749,15 @@ handle_fatal_error:
 			complete(&csid_hw->csid_ipp_complete);
 		}
 
-		if ((irq_status[CSID_IRQ_STATUS_IPP] &
-			CSID_PATH_INFO_INPUT_SOF) &&
-			(csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ)) {
-			CAM_INFO_RATE_LIMIT(CAM_ISP, "CSID:%d IPP SOF received",
-				csid_hw->hw_intf->hw_idx);
-			if (csid_hw->sof_irq_triggered)
-				csid_hw->irq_debug_cnt++;
+		if (irq_status[CSID_IRQ_STATUS_IPP] &
+			CSID_PATH_INFO_INPUT_SOF) {
+			csid_hw->error_irq_count = 0;
+			if (csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ) {
+				CAM_INFO_RATE_LIMIT(CAM_ISP, "CSID:%d IPP SOF received",
+					csid_hw->hw_intf->hw_idx);
+				if (csid_hw->sof_irq_triggered)
+					csid_hw->irq_debug_cnt++;
+			}
 		}
 
 		if ((irq_status[CSID_IRQ_STATUS_IPP] &
@@ -3875,13 +3862,15 @@ handle_fatal_error:
 			complete(&csid_hw->csid_ppp_complete);
 		}
 
-		if ((irq_status[CSID_IRQ_STATUS_PPP] &
-			CSID_PATH_INFO_INPUT_SOF) &&
-			(csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ)) {
-			CAM_INFO_RATE_LIMIT(CAM_ISP, "CSID:%d PPP SOF received",
-				csid_hw->hw_intf->hw_idx);
-			if (csid_hw->sof_irq_triggered)
-				csid_hw->irq_debug_cnt++;
+		if (irq_status[CSID_IRQ_STATUS_PPP] &
+			CSID_PATH_INFO_INPUT_SOF) {
+			csid_hw->error_irq_count = 0;
+			if (csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ) {
+				CAM_INFO_RATE_LIMIT(CAM_ISP, "CSID:%d PPP SOF received",
+					csid_hw->hw_intf->hw_idx);
+				if (csid_hw->sof_irq_triggered)
+					csid_hw->irq_debug_cnt++;
+			}
 		}
 
 		if ((irq_status[CSID_IRQ_STATUS_PPP] &
@@ -3986,13 +3975,15 @@ handle_fatal_error:
 			complete(&csid_hw->csid_rdin_complete[i]);
 		}
 
-		if ((irq_status[CSID_IRQ_STATUS_RDI0 + i] &
-			CSID_PATH_INFO_INPUT_SOF) &&
-			(csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ)) {
-			CAM_INFO_RATE_LIMIT(CAM_ISP,
-				"CSID RDI:%d SOF received", i);
-			if (csid_hw->sof_irq_triggered)
-				csid_hw->irq_debug_cnt++;
+		if (irq_status[CSID_IRQ_STATUS_RDI0 + i] &
+			CSID_PATH_INFO_INPUT_SOF) {
+			csid_hw->error_irq_count = 0;
+			if (csid_hw->csid_debug & CSID_DEBUG_ENABLE_SOF_IRQ) {
+				CAM_INFO_RATE_LIMIT(CAM_ISP,
+					"CSID RDI:%d SOF received", i);
+				if (csid_hw->sof_irq_triggered)
+					csid_hw->irq_debug_cnt++;
+			}
 		}
 
 		if ((irq_status[CSID_IRQ_STATUS_RDI0 + i] &

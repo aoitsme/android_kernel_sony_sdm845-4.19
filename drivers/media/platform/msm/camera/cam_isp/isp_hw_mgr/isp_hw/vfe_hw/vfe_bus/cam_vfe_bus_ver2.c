@@ -271,8 +271,6 @@ static int cam_vfe_bus_put_evt_payload(void     *core_info,
 	struct cam_vfe_bus_irq_evt_payload     **evt_payload)
 {
 	struct cam_vfe_bus_ver2_common_data *common_data = NULL;
-	uint32_t  *ife_irq_regs = NULL;
-	uint32_t   status_reg0, status_reg1, status_reg2;
 	unsigned long flags;
 
 	if (!core_info) {
@@ -284,22 +282,13 @@ static int cam_vfe_bus_put_evt_payload(void     *core_info,
 		return -EINVAL;
 	}
 	(*evt_payload)->error_type = 0;
-	ife_irq_regs = (*evt_payload)->irq_reg_val;
-	status_reg0 = ife_irq_regs[CAM_IFE_IRQ_BUS_REG_STATUS0];
-	status_reg1 = ife_irq_regs[CAM_IFE_IRQ_BUS_REG_STATUS1];
-	status_reg2 = ife_irq_regs[CAM_IFE_IRQ_BUS_REG_STATUS2];
-
-	if (status_reg0 || status_reg1 || status_reg2) {
-		CAM_DBG(CAM_ISP, "status0 0x%x status1 0x%x status2 0x%x",
-			status_reg0, status_reg1, status_reg2);
-		return 0;
-	}
 
 	common_data = core_info;
 
 	spin_lock_irqsave(&common_data->spin_lock, flags);
-	list_add_tail(&(*evt_payload)->list,
-		&common_data->free_payload_list);
+	if (list_empty(&(*evt_payload)->list))
+		list_add_tail(&(*evt_payload)->list,
+			&common_data->free_payload_list);
 	spin_unlock_irqrestore(&common_data->spin_lock, flags);
 
 	*evt_payload = NULL;
@@ -1337,7 +1326,9 @@ static int cam_vfe_bus_handle_wm_done_bottom_half(void *wm_node,
 	CAM_DBG(CAM_ISP, "status_reg %x rc %d wm_idx %d",
 		status_reg, rc, rsrc_data->index);
 
-	if (rc == CAM_VFE_IRQ_STATUS_SUCCESS)
+	if (rc == CAM_VFE_IRQ_STATUS_SUCCESS ||
+	    rc == CAM_VFE_IRQ_STATUS_COMP_OWRT ||
+	    rc == CAM_VFE_IRQ_STATUS_ERR_COMP)
 		cam_vfe_bus_put_evt_payload(rsrc_data->common_data,
 			&evt_payload);
 
@@ -1778,9 +1769,25 @@ static int cam_vfe_bus_acquire_comp_grp(
 				CAM_ERR(CAM_ISP, "No Free Composite Group");
 				return -ENODEV;
 			}
-			comp_grp_local = list_first_entry(
-				&ver2_bus_priv->free_comp_grp,
-				struct cam_isp_resource_node, list);
+			if (bus_comp_grp_id != CAM_VFE_BUS_COMP_GROUP_NONE) {
+				struct cam_isp_resource_node *comp_grp_iter;
+
+				list_for_each_entry(comp_grp_iter,
+					&ver2_bus_priv->free_comp_grp, list) {
+					struct cam_vfe_bus_ver2_comp_grp_data *iter_data =
+						comp_grp_iter->res_priv;
+
+					if (iter_data->comp_grp_type == bus_comp_grp_id) {
+						comp_grp_local = comp_grp_iter;
+						break;
+					}
+				}
+			}
+			if (!comp_grp_local) {
+				comp_grp_local = list_first_entry(
+					&ver2_bus_priv->free_comp_grp,
+					struct cam_isp_resource_node, list);
+			}
 			rsrc_data = comp_grp_local->res_priv;
 		}
 
@@ -2113,10 +2120,8 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 		/* Regular Composite SUCCESS */
 		if (status_reg & BIT(comp_grp_id + 5)) {
 			rsrc_data->irq_trigger_cnt++;
-			if (rsrc_data->irq_trigger_cnt ==
+			if (rsrc_data->irq_trigger_cnt >=
 				rsrc_data->acquire_dev_cnt) {
-				cam_ife_irq_regs[CAM_IFE_IRQ_BUS_REG_STATUS0] &=
-					~BIT(comp_grp_id + 5);
 				rsrc_data->irq_trigger_cnt = 0;
 			}
 			rc = CAM_VFE_IRQ_STATUS_SUCCESS;
@@ -2156,12 +2161,10 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 		}
 
 		/* DUAL Composite SUCCESS */
-		if (status_reg & BIT(comp_grp_id)) {
+		if ((status_reg & BIT(comp_grp_id)) || (status_reg & 0x3F)) {
 			rsrc_data->irq_trigger_cnt++;
-			if (rsrc_data->irq_trigger_cnt ==
+			if (rsrc_data->irq_trigger_cnt >=
 				rsrc_data->acquire_dev_cnt) {
-				cam_ife_irq_regs[CAM_IFE_IRQ_BUS_REG_STATUS2] &=
-					~BIT(comp_grp_id);
 				rsrc_data->irq_trigger_cnt = 0;
 			}
 			rc = CAM_VFE_IRQ_STATUS_SUCCESS;
@@ -2184,7 +2187,9 @@ static int cam_vfe_bus_handle_comp_done_bottom_half(
 		break;
 	}
 
-	if (rc == CAM_VFE_IRQ_STATUS_SUCCESS)
+	if (rc == CAM_VFE_IRQ_STATUS_SUCCESS ||
+	    rc == CAM_VFE_IRQ_STATUS_COMP_OWRT ||
+	    rc == CAM_VFE_IRQ_STATUS_ERR_COMP)
 		cam_vfe_bus_put_evt_payload(rsrc_data->common_data,
 			&evt_payload);
 
@@ -2356,7 +2361,7 @@ static int cam_vfe_bus_acquire_vfe_out(void *bus_priv, void *acquire_args,
 	if (num_wm > 1 || (out_acquire_args->is_dual) ||
 		(out_acquire_args->out_port_info->comp_grp_id >
 		CAM_ISP_RES_COMP_GROUP_NONE &&
-		out_acquire_args->out_port_info->comp_grp_id <
+		out_acquire_args->out_port_info->comp_grp_id <=
 		CAM_ISP_RES_COMP_GROUP_ID_MAX)) {
 
 		rc = cam_vfe_bus_acquire_comp_grp(ver2_bus_priv,
@@ -2572,7 +2577,7 @@ static int cam_vfe_bus_handle_vfe_out_done_bottom_half(
 	if (rsrc_data->comp_grp) {
 		rc = rsrc_data->comp_grp->bottom_half_handler(
 			rsrc_data->comp_grp, evt_payload_priv);
-	} else {
+	} else if (rsrc_data->wm_res[0]) {
 		rc = rsrc_data->wm_res[0]->bottom_half_handler(
 			rsrc_data->wm_res[0], evt_payload_priv);
 	}
@@ -2799,6 +2804,9 @@ static int cam_vfe_bus_update_ubwc_3_regs(
 	CAM_DBG(CAM_ISP, "WM %d packer cfg 0x%x",
 		wm_data->index, reg_val_pair[*j-1]);
 
+	if (!wm_data->ubwc_mode_cfg_0 && !wm_data->tile_cfg)
+		goto end;
+
 	if (wm_data->is_dual) {
 		CAM_VFE_ADD_REG_VAL_PAIR(reg_val_pair, *j,
 			ubwc_regs->tile_cfg, wm_data->tile_cfg);
@@ -2922,6 +2930,9 @@ static int cam_vfe_bus_update_ubwc_legacy_regs(
 		wm_data->hw_regs->packer_cfg, wm_data->packer_cfg);
 	CAM_DBG(CAM_ISP, "WM %d packer cfg 0x%x",
 		wm_data->index, reg_val_pair[*j-1]);
+
+	if (!wm_data->ubwc_mode_cfg_0 && !wm_data->tile_cfg)
+		goto end;
 
 	if (wm_data->is_dual) {
 		CAM_VFE_ADD_REG_VAL_PAIR(reg_val_pair, *j,
@@ -3113,6 +3124,25 @@ static int cam_vfe_bus_update_wm(void *priv, void *cmd_args,
 				CAM_ERR(CAM_ISP,
 					"No UBWC register to configure.");
 				return -EINVAL;
+			}
+
+			if (!wm_data->ubwc_mode_cfg_0 && !wm_data->tile_cfg &&
+				(io_cfg->planes[i].mode_config ||
+				io_cfg->planes[i].tile_config)) {
+				wm_data->packer_cfg =
+					io_cfg->planes[i].packer_config;
+				wm_data->ubwc_mode_cfg_0 =
+					io_cfg->planes[i].mode_config;
+				wm_data->tile_cfg =
+					io_cfg->planes[i].tile_config;
+				wm_data->h_init =
+					io_cfg->planes[i].h_init;
+				wm_data->v_init =
+					io_cfg->planes[i].v_init;
+				wm_data->ubwc_meta_stride =
+					io_cfg->planes[i].meta_stride;
+				wm_data->ubwc_meta_offset =
+					io_cfg->planes[i].meta_offset;
 			}
 
 			cam_vfe_bus_update_ubwc_regs(

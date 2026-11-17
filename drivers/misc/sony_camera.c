@@ -26,6 +26,13 @@
 #include <linux/pinctrl/consumer.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
+#include <linux/poll.h>
+#include <linux/wait.h>
+#include <linux/atomic.h>
+#include <linux/interrupt.h>
+#include <linux/hrtimer.h>
+#include <linux/ktime.h>
+#include <linux/time64.h>
 #include <media/v4l2-subdev.h>
 #include "cam_cci_dev.h"
 
@@ -40,6 +47,18 @@
 #define SONY_CAMERA_CMD_SET_THERMAL     0x10008
 #define SONY_CAMERA_CMD_DOWNLOAD_FIRMWARE 0x10009
 #define SONY_CAMERA_CMD_CLEAR_EVENT     0x1000b
+
+#define SONY_CAMERA_EVENT_SOF           0x20000
+#define SONY_CAMERA_EVENT_EOF           0x20001
+#define SONY_CAMERA_EVENT_ERROR         0x20002
+
+struct sony_camera_event_data {
+	uint32_t event_id;      /* offset 0: 0x20000 = SOF */
+	uint32_t frame_seq;     /* offset 4: sequence number / SOF counter */
+	uint32_t tv_sec;        /* offset 8: seconds (multiplied by 10^9 in libcammw) */
+	uint32_t tv_usec;       /* offset 12: microseconds (multiplied by 10^3 in libcammw) */
+	uint32_t reserved[4];   /* offset 16..31: padding to 32 bytes */
+};
 
 struct sony_camera_i2c_req {
 	uint32_t slave_addr;
@@ -67,6 +86,8 @@ struct sony_camera_dev {
 	u32 mclk_rate;
 
 	int gpio_reset;
+	int gpio_sof;
+	int irq_sof;
 
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *pinctrl_default;
@@ -74,13 +95,71 @@ struct sony_camera_dev {
 
 	struct mutex lock;
 	bool is_powered;
+	bool is_streaming;
 	int open_count;
 	u8 nvm_sum;
+
+	wait_queue_head_t event_wq;
+	atomic_t event_available;
+	struct sony_camera_event_data current_event;
+	u32 frame_seq;
+	ktime_t last_sof_kt;
+	struct hrtimer sof_timer;
 
 	/* Qualcomm CCI client */
 	struct cam_sensor_cci_client cci_client;
 	struct cam_sensor_i2c_reg_array reg_array[256];
 };
+
+static enum hrtimer_restart sony_camera_timer_fn(struct hrtimer *timer)
+{
+	struct sony_camera_dev *sdev = container_of(timer, struct sony_camera_dev, sof_timer);
+	struct timespec64 ts;
+
+	if (!sdev || !sdev->is_powered || !sdev->is_streaming)
+		return HRTIMER_NORESTART;
+
+	ktime_get_real_ts64(&ts);
+	sdev->frame_seq++;
+	sdev->current_event.event_id = SONY_CAMERA_EVENT_SOF;
+	sdev->current_event.frame_seq = sdev->frame_seq;
+	sdev->current_event.tv_sec = (uint32_t)ts.tv_sec;
+	sdev->current_event.tv_usec = (uint32_t)(ts.tv_nsec / 1000);
+
+	atomic_set(&sdev->event_available, 1);
+	wake_up_interruptible(&sdev->event_wq);
+
+	hrtimer_forward_now(timer, ms_to_ktime(33));
+	return HRTIMER_RESTART;
+}
+
+static irqreturn_t sony_camera_sof_irq_handler(int irq, void *data)
+{
+	struct sony_camera_dev *sdev = data;
+	struct timespec64 ts;
+	ktime_t now;
+
+	if (!sdev || !sdev->is_powered || !sdev->is_streaming)
+		return IRQ_HANDLED;
+
+	/* Debounce GPIO SOF burst/glitches so each frame emits at most one SOF */
+	now = ktime_get();
+	if (sdev->last_sof_kt && ktime_to_ms(ktime_sub(now, sdev->last_sof_kt)) < 10)
+		return IRQ_HANDLED;
+	sdev->last_sof_kt = now;
+
+	ktime_get_real_ts64(&ts);
+	sdev->frame_seq++;
+	sdev->current_event.event_id = SONY_CAMERA_EVENT_SOF;
+	sdev->current_event.frame_seq = sdev->frame_seq;
+	sdev->current_event.tv_sec = (uint32_t)ts.tv_sec;
+	sdev->current_event.tv_usec = (uint32_t)(ts.tv_nsec / 1000);
+
+	atomic_set(&sdev->event_available, 1);
+	wake_up_interruptible(&sdev->event_wq);
+
+	return IRQ_HANDLED;
+}
 
 static int sony_camera_power_on(struct sony_camera_dev *sdev)
 {
@@ -183,6 +262,9 @@ static int sony_camera_power_on(struct sony_camera_dev *sdev)
 	}
 
 	sdev->is_powered = true;
+	sdev->is_streaming = false;
+	sdev->frame_seq = 0;
+	atomic_set(&sdev->event_available, 0);
 	dev_info(sdev->dev, "%s: sensor module '%s' powered ON successfully\n", sdev->name, sdev->module_name);
 	return 0;
 }
@@ -191,6 +273,11 @@ static int sony_camera_power_off(struct sony_camera_dev *sdev)
 {
 	if (!sdev->is_powered)
 		return 0;
+
+	sdev->is_streaming = false;
+	hrtimer_cancel(&sdev->sof_timer);
+	atomic_set(&sdev->event_available, 0);
+	wake_up_interruptible(&sdev->event_wq);
 
 	dev_info(sdev->dev, "%s: powering off sensor module '%s'\n", sdev->name, sdev->module_name);
 
@@ -274,8 +361,25 @@ static int sony_camera_release(struct inode *inode, struct file *file)
 			sony_camera_power_off(sdev);
 		}
 		mutex_unlock(&sdev->lock);
+		wake_up_interruptible(&sdev->event_wq);
 	}
 	return 0;
+}
+
+static __poll_t sony_camera_poll(struct file *file, struct poll_table_struct *wait)
+{
+	struct sony_camera_dev *sdev = file->private_data;
+	__poll_t mask = 0;
+
+	if (!sdev)
+		return EPOLLERR;
+
+	poll_wait(file, &sdev->event_wq, wait);
+
+	if (atomic_read(&sdev->event_available))
+		mask |= (EPOLLIN | EPOLLPRI | EPOLLRDNORM);
+
+	return mask;
 }
 
 static long sony_camera_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -309,10 +413,11 @@ static long sony_camera_ioctl(struct file *file, unsigned int cmd, unsigned long
 		return 0;
 
 	case SONY_CAMERA_CMD_GET_EVENT:
+		atomic_set(&sdev->event_available, 0);
 		if (arg) {
-			char zero[32] = {0};
-			if (copy_to_user((void __user *)arg, zero, sizeof(zero)))
+			if (copy_to_user((void __user *)arg, &sdev->current_event, sizeof(sdev->current_event)))
 				return -EFAULT;
+			pr_debug("%s: GET_EVENT seq=%u\n", sdev->name, sdev->current_event.frame_seq);
 		}
 		return 0;
 
@@ -321,7 +426,9 @@ static long sony_camera_ioctl(struct file *file, unsigned int cmd, unsigned long
 		return 0;
 
 	case SONY_CAMERA_CMD_CLEAR_EVENT:
-		pr_info("%s: CLEAR_EVENT\n", sdev->name);
+		sdev->frame_seq = 0;
+		atomic_set(&sdev->event_available, 0);
+		pr_info("%s: CLEAR_EVENT (frame_seq reset)\n", sdev->name);
 		return 0;
 
 	case SONY_CAMERA_CMD_DOWNLOAD_FIRMWARE: {
@@ -403,7 +510,7 @@ static long sony_camera_ioctl(struct file *file, unsigned int cmd, unsigned long
 
 		mutex_unlock(&sdev->lock);
 
-		pr_info("%s: READ_I2C slave=0x%x reg=0x%x type=%u len=%u -> [0x%02x, 0x%02x]\n",
+		pr_debug("%s: READ_I2C slave=0x%x reg=0x%x type=%u len=%u -> [0x%02x, 0x%02x]\n",
 			sdev->name, req.slave_addr, req.reg_addr, req.addr_type, req.length,
 			req.data[0], req.data[1]);
 
@@ -450,7 +557,25 @@ static long sony_camera_ioctl(struct file *file, unsigned int cmd, unsigned long
 
 		sdev->cci_client.sid = req.slave_addr >> 1;
 
-		pr_info("%s: WRITE_I2C slave=0x%x (sid=0x%x) reg=0x%x type=%u len=%u [0x%02x, 0x%02x]\n",
+		/* Track sensor streaming state: reg 0x0100 is standard MODE_SELECT */
+		if (req.reg_addr == 0x0100 && req.length >= 1) {
+			if (req.data[0] == 0x01) {
+				sdev->is_streaming = true;
+				sdev->frame_seq = 0;
+				sdev->last_sof_kt = 0;
+				atomic_set(&sdev->event_available, 0);
+				if (sdev->irq_sof <= 0)
+					hrtimer_start(&sdev->sof_timer, ms_to_ktime(33), HRTIMER_MODE_REL);
+				pr_info("%s: STREAMING STARTED (reg 0x100=0x01, frame_seq reset to 0)\n", sdev->name);
+			} else if (req.data[0] == 0x00) {
+				sdev->is_streaming = false;
+				hrtimer_cancel(&sdev->sof_timer);
+				atomic_set(&sdev->event_available, 0);
+				pr_info("%s: STREAMING STOPPED (reg 0x100=0x00)\n", sdev->name);
+			}
+		}
+
+		pr_debug("%s: WRITE_I2C slave=0x%x (sid=0x%x) reg=0x%x type=%u len=%u [0x%02x, 0x%02x]\n",
 			sdev->name, req.slave_addr, sdev->cci_client.sid, req.reg_addr,
 			req.addr_type, req.length, req.data[0], (req.length > 1) ? req.data[1] : 0);
 
@@ -503,6 +628,7 @@ static const struct file_operations sony_camera_fops = {
 	.owner = THIS_MODULE,
 	.open = sony_camera_open,
 	.release = sony_camera_release,
+	.poll = sony_camera_poll,
 	.unlocked_ioctl = sony_camera_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = sony_camera_compat_ioctl,
@@ -514,7 +640,7 @@ static int sony_camera_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	struct sony_camera_dev *sdev;
 	const char *mod_name = NULL;
-	int num_labels, reset_idx, i;
+	int num_labels, reset_idx, sof_idx, i;
 	int ret;
 
 	if (!np) {
@@ -528,6 +654,10 @@ static int sony_camera_probe(struct platform_device *pdev)
 
 	sdev->dev = &pdev->dev;
 	mutex_init(&sdev->lock);
+	init_waitqueue_head(&sdev->event_wq);
+	atomic_set(&sdev->event_available, 0);
+	hrtimer_init(&sdev->sof_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	sdev->sof_timer.function = sony_camera_timer_fn;
 
 	if (of_property_read_u32(np, "cell-index", &sdev->cell_index)) {
 		const struct of_device_id *id = of_match_device(pdev->dev.driver->of_match_table, &pdev->dev);
@@ -600,15 +730,17 @@ static int sony_camera_probe(struct platform_device *pdev)
 	if (of_property_read_u32(np, "clock-rates", &sdev->mclk_rate))
 		sdev->mclk_rate = 8000000;
 
-	/* 3. Parse Reset GPIO */
+	/* 3. Parse Reset and SOF GPIOs */
 	num_labels = of_property_count_strings(np, "gpio-req-tbl-label");
 	reset_idx = -1;
+	sof_idx = -1;
 	for (i = 0; i < num_labels; i++) {
 		const char *lbl = NULL;
 		if (of_property_read_string_index(np, "gpio-req-tbl-label", i, &lbl) == 0) {
 			if (!strcmp(lbl, "SONY_CAMERA_RESET")) {
 				reset_idx = i;
-				break;
+			} else if (!strcmp(lbl, "SONY_CAMERA_SOF")) {
+				sof_idx = i;
 			}
 		}
 	}
@@ -630,6 +762,37 @@ static int sony_camera_probe(struct platform_device *pdev)
 		}
 	} else {
 		sdev->gpio_reset = -1;
+	}
+
+	if (sof_idx >= 0)
+		sdev->gpio_sof = of_get_gpio(np, sof_idx);
+	else
+		sdev->gpio_sof = of_get_gpio(np, (sdev->cell_index == 0) ? 1 : -1);
+
+	if (gpio_is_valid(sdev->gpio_sof)) {
+		ret = devm_gpio_request_one(&pdev->dev, sdev->gpio_sof,
+					    GPIOF_IN, "sony_camera_sof");
+		if (!ret) {
+			sdev->irq_sof = gpio_to_irq(sdev->gpio_sof);
+			if (sdev->irq_sof > 0) {
+				ret = devm_request_irq(&pdev->dev, sdev->irq_sof,
+						       sony_camera_sof_irq_handler,
+						       IRQF_TRIGGER_RISING,
+						       "sony_camera_sof", sdev);
+				if (ret)
+					dev_warn(&pdev->dev, "%s: failed to request SOF irq %d: %d\n",
+						 sdev->name, sdev->irq_sof, ret);
+				else
+					dev_info(&pdev->dev, "%s: requested SOF irq %d on gpio %d\n",
+						 sdev->name, sdev->irq_sof, sdev->gpio_sof);
+			}
+		} else {
+			sdev->gpio_sof = -1;
+			sdev->irq_sof = -1;
+		}
+	} else {
+		sdev->gpio_sof = -1;
+		sdev->irq_sof = -1;
 	}
 
 	/* 4. Parse Pinctrl */

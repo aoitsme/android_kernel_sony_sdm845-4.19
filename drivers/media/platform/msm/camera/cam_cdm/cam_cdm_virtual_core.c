@@ -80,6 +80,7 @@ int cam_virtual_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 	for (i = 0; i < req->data->cmd_arrary_count ; i++) {
 		uintptr_t vaddr_ptr = 0;
 		size_t len = 0;
+		bool put_cpu_buf = false;
 
 		if ((!cdm_cmd->cmd[i].len) &&
 			(cdm_cmd->cmd[i].len > 0x100000)) {
@@ -94,6 +95,8 @@ int cam_virtual_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 			rc = cam_mem_get_cpu_buf(
 				cdm_cmd->cmd[i].bl_addr.mem_handle, &vaddr_ptr,
 				&len);
+			if (!rc)
+				put_cpu_buf = true;
 		} else if (req->data->type ==
 			CAM_CDM_BL_CMD_TYPE_KERNEL_IOVA) {
 			rc = 0;
@@ -115,6 +118,9 @@ int cam_virtual_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 				cdm_cmd->cmd[i].len) {
 				CAM_ERR(CAM_CDM, "Not enough buffer");
 				rc = -EINVAL;
+				if (put_cpu_buf)
+					cam_mem_put_cpu_buf(
+						cdm_cmd->cmd[i].bl_addr.mem_handle);
 				break;
 			}
 			CAM_DBG(CAM_CDM,
@@ -128,6 +134,9 @@ int cam_virtual_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 					((cdm_cmd->cmd[i].offset)/4)),
 				cdm_cmd->cmd[i].len, client->data.base_array,
 				client->data.base_array_cnt, core->bl_tag);
+			if (put_cpu_buf)
+				cam_mem_put_cpu_buf(
+					cdm_cmd->cmd[i].bl_addr.mem_handle);
 			if (rc) {
 				CAM_ERR(CAM_CDM,
 					"write failed for cnt=%d:%d len %u",
@@ -144,6 +153,9 @@ int cam_virtual_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 				"Sanity check failed for cmd_count=%d cnt=%d",
 				i, req->data->cmd_arrary_count);
 			rc = -EINVAL;
+			if (put_cpu_buf)
+				cam_mem_put_cpu_buf(
+					cdm_cmd->cmd[i].bl_addr.mem_handle);
 			break;
 		}
 		if (!rc) {
@@ -153,7 +165,7 @@ int cam_virtual_cdm_submit_bl(struct cam_hw_info *cdm_hw,
 				"write BL success for cnt=%d with tag=%d",
 				i, core->bl_tag);
 			if ((true == req->data->flag) &&
-				(i == req->data->cmd_arrary_count)) {
+				(i == (req->data->cmd_arrary_count - 1))) {
 				struct cam_cdm_bl_cb_request_entry *node;
 
 				node = kzalloc(sizeof(

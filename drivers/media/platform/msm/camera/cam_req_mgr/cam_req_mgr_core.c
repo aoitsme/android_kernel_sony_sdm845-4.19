@@ -2225,6 +2225,7 @@ static int cam_req_mgr_process_trigger(void *priv, void *data)
 {
 	int                                  rc = 0;
 	int32_t                              idx = -1;
+	bool                                 rd_was_applied = false;
 	struct cam_req_mgr_trigger_notify   *trigger_data = NULL;
 	struct cam_req_mgr_core_link        *link = NULL;
 	struct cam_req_mgr_req_queue        *in_q = NULL;
@@ -2247,6 +2248,14 @@ static int cam_req_mgr_process_trigger(void *priv, void *data)
 	in_q = link->req.in_q;
 
 	mutex_lock(&link->req.lock);
+
+	/*
+	 * Preserve whether current rd_idx was already applied before resetting
+	 * trigger_data->req_id's slot, in case buf_done completed before the next
+	 * SOF and idx == in_q->rd_idx (otherwise rd_idx would stall at NO_REQ).
+	 */
+	rd_was_applied =
+		(in_q->slot[in_q->rd_idx].status == CRM_SLOT_STATUS_REQ_APPLIED);
 
 	if (trigger_data->trigger == CAM_TRIGGER_POINT_SOF) {
 		idx = __cam_req_mgr_find_slot_for_req(in_q,
@@ -2273,7 +2282,7 @@ static int cam_req_mgr_process_trigger(void *priv, void *data)
 
 	spin_unlock_bh(&link->link_state_spin_lock);
 
-	if (in_q->slot[in_q->rd_idx].status == CRM_SLOT_STATUS_REQ_APPLIED) {
+	if (rd_was_applied) {
 		/*
 		 * Do NOT reset req q slot data here, it can not be done
 		 * here because we need to preserve the data to handle bubble.
