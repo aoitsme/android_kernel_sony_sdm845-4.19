@@ -648,6 +648,15 @@ config SENSORS_TCS3490
           ALS and color light sensors.
           This driver can also be build as module.
 
+config CXD224X_NFC
+	bool "CXD224X driver for FeliCa and NFC"
+	depends on I2C && GPIOLIB && OF
+	depends on !NFC_CARILLON
+	help
+	  Enable the Sony CXD224X I2C driver with the wake_ctl sysfs
+	  interface. For Carillon devices using BD7602, select NFC_CARILLON.
+
+source "drivers/misc/carillon/Kconfig"
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"

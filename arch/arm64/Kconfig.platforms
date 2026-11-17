@@ -500,4 +500,38 @@ config MACH_SONY_APOLLO
 	  which is based on SONY Tama platform.
 	  If you enable this config,
 	  please use SONY Mobile device tree.
+
+config MACH_SONY_AURORA
+	bool "Sony Mobile Aurora"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the SONY Mobile Aurora device
+	  which is based on SONY Tama platform.
+	  If you enable this config,
+	  please use SONY Mobile device tree.
+
+config MACH_SONY_AKARI_JP
+	bool "Sony Mobile Akari JP"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the Japanese Sony Mobile Akari device.
+
+config MACH_SONY_AKATSUKI_JP
+	bool "Sony Mobile Akatsuki JP"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the Japanese Sony Mobile Akatsuki device.
+
+config MACH_SONY_APOLLO_JP
+	bool "Sony Mobile Apollo JP"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the Japanese Sony Mobile Apollo device.
+
+config MACH_SONY_AURORA_JP
+	bool "Sony Mobile Aurora JP"
+	depends on ARCH_SONY_TAMA
+	help
+	  Support for the Japanese Sony Mobile Aurora device.
+
 endmenu

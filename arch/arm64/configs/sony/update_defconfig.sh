@@ -24,7 +24,7 @@ ${KERNEL_DEFCONFIG_URL}/tree/${KERNEL_DEFCONFIG_HEAD}
 EOM
 
 NILE="discovery pioneer voyager"
-TAMA="apollo akari akatsuki"
+TAMA="apollo akari akatsuki aurora apollo_jp akari_jp akatsuki_jp aurora_jp"
 GANGES="kirin mermaid"
 KUMANO="griffin bahamut"
 SEINE="pdx201"

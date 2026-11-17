@@ -93,3 +93,5 @@ CFLAGS_sony_camera.o += -I$(srctree)/include/uapi/media \
                         -I$(srctree)/drivers/media/platform/msm/camera/cam_smmu
 obj-$(CONFIG_SONY_CAMERA)        += sony_camera.o
 obj-$(CONFIG_POWERKEY_FORCECRASH)	+= powerkey_forcecrash.o
+obj-$(CONFIG_CXD224X_NFC)		+= cxd224x-i2c.o
+obj-$(CONFIG_NFC_CARILLON)		+= carillon/
